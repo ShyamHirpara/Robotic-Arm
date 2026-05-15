@@ -1,0 +1,67 @@
+# Node.js dependencies
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Frontend build output
+dist/
+dist-ssr/
+*.local
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+.pytest_cache/
+.tox/
+.coverage
+.cache
+nosetests.xml
+coverage.xml
+
+# Virtual environments
+venv/
+.venv/
+ENV/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# SQLite databases
+*.sqlite
+*.db
+*.sqlite3
+database.sqlite
+armobot_db.sqlite
+
+# IDEs and OS specific files
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+/references/
+/old_versions/
+checkpoint*.md
