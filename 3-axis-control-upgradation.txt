@@ -1,0 +1,61 @@
+Frontend changes:
+```
+
+base control buttons:
+<input type="button" class="base-buttons left-side" onclick={singleclickfunction1} onmousedown={holdstartfunction1} onmouseup={holdendfunction1 }
+<input type="button" class="base-buttons right-side" onclick={singleclickfunction2} onmousedown={holdstartfunction2} onmouseup={holdendfunction2 }
+
+Shoulder control buttons:
+<input type="button" class="shoulder-buttons up-side" onclick={singleclickfunction3} onmousedown={holdstartfunction3} onmouseup={holdendfunction3 }
+<input type="button" class="shoulder-buttons down-side" onclick={singleclickfunction4} onmousedown={holdstartfunction4} onmouseup={holdendfunction4 }
+
+Elbow control buttons:
+<input type="button" class="elbow-buttons up-side" onclick={singleclickfunction5} onmousedown={holdstartfunction5} onmouseup={holdendfunction5 }
+<input type="button" class="elbow-buttons down-side" onclick={singleclickfunction6} onmousedown={holdstartfunction6} onmouseup={holdendfunction6 }
+
+
+function singleclickfunction1(direction){
+    // GET request to the backend for moving the stepper motor in required direction with predefined degree positions
+}
+
+function holdstartfunction1(){
+    // GET request to the backend for moving the stepper motor in required direction
+    // make it hold so that it moves continously
+}
+
+function holdendfunction1(){
+    // GET request to the backend for stopping the stepper motor
+}
+
+Backend changes:
+
+
+create new endpoints for these control commands 
+
+
+
+``` 
+
+
+logic : 
+
+-User clicks on base control button-right one click 
+-script for singleclick sends request to backend in pico for moving steppermotor to predefined degrees in right direction if it does not exceed max degree limit of min degree limit of that stepper motor
+
+
+-User click and hold the base control button right
+-script for holdstart sends request to backend in pico for moving steppermotor in right direction continously at predefined speed and checks two conditions for stopping motor :
+-if any of the limit switchs are triggered 
+-if any of the stepper motor has reached its max degree limit or min degree limit 
+-if user leaves hold of the button (mouseup event occurs) sccript for holdend sends request to backend in pico for stopping the stepper motor 
+
+
+
+Purpose of these changes :
+
+-User can move the arm in any direction by just clicking the buttons without any hesitation
+-User can move the arm continously by just holding the buttons without any hesitation
+-User can stop the arm at any position by just releasing the buttons without any hesitation
+-User can move the arm to the required position by just clicking the buttons without any hesitation
+-User can move the arm to the required position by just holding the buttons without any hesitation
+-reducing load on frontend and backend

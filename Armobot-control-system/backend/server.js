@@ -24,9 +24,24 @@ db.serialize(() => {
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       username TEXT UNIQUE,
       password_hash TEXT,
-      role TEXT DEFAULT 'user'
+      role TEXT DEFAULT 'user',
+      company TEXT,
+      address TEXT,
+      city TEXT,
+      country TEXT,
+      created_at DATETIME DEFAULT CURRENT_TIMESTAMP
     )
   `);
+
+  // Auto-migrate schema for existing tables
+  ['company', 'address', 'city', 'country'].forEach(col => {
+    db.run(`ALTER TABLE users ADD COLUMN ${col} TEXT`, (err) => {});
+  });
+  db.run(`ALTER TABLE users ADD COLUMN created_at TEXT DEFAULT '2026-05-13 12:00:00'`, (err) => {
+    if (err && !err.message.includes('duplicate column')) {
+      console.log('Migration note (created_at):', err.message);
+    }
+  });
 
   // Create a default admin if none exists
   db.get(`SELECT * FROM users WHERE role = 'admin'`, async (err, row) => {
@@ -60,11 +75,14 @@ const requireAdmin = (req, res, next) => {
 
 // --- Auth Routes ---
 app.post('/api/users', authenticateToken, requireAdmin, async (req, res) => {
-  const { username, password, role } = req.body;
+  const { username, password, role, company, address, city, country } = req.body;
   const userRole = role || 'user';
   try {
     const hash = await bcrypt.hash(password, 10);
-    db.run(`INSERT INTO users (username, password_hash, role) VALUES (?, ?, ?)`, [username, hash, userRole], function(err) {
+    db.run(
+      `INSERT INTO users (username, password_hash, role, company, address, city, country) VALUES (?, ?, ?, ?, ?, ?, ?)`, 
+      [username, hash, userRole, company, address, city, country], 
+      function(err) {
       if (err) {
         if (err.message.includes('UNIQUE constraint failed')) {
           return res.status(400).json({ error: 'Username already exists' });
@@ -94,7 +112,7 @@ app.post('/api/auth/login', (req, res) => {
 
 // --- Admin Routes ---
 app.get('/api/users', authenticateToken, requireAdmin, (req, res) => {
-  db.all(`SELECT id, username, role FROM users`, [], (err, rows) => {
+  db.all(`SELECT id, username, role, company, address, city, country, created_at FROM users`, [], (err, rows) => {
     if (err) return res.status(500).json({ error: err.message });
     res.json(rows);
   });
@@ -110,16 +128,18 @@ app.delete('/api/users/:id', authenticateToken, requireAdmin, (req, res) => {
 
 app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   const { id } = req.params;
-  const { username, password, role } = req.body;
+  const { username, password, role, company, address, city, country } = req.body;
   try {
     if (password) {
       const hash = await bcrypt.hash(password, 10);
-      db.run(`UPDATE users SET username = ?, password_hash = ?, role = ? WHERE id = ?`, [username, hash, role, id], function(err) {
+      db.run(`UPDATE users SET username = ?, password_hash = ?, role = ?, company = ?, address = ?, city = ?, country = ? WHERE id = ?`, 
+        [username, hash, role, company, address, city, country, id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ message: 'User updated' });
       });
     } else {
-      db.run(`UPDATE users SET username = ?, role = ? WHERE id = ?`, [username, role, id], function(err) {
+      db.run(`UPDATE users SET username = ?, role = ?, company = ?, address = ?, city = ?, country = ? WHERE id = ?`, 
+        [username, role, company, address, city, country, id], function(err) {
         if (err) return res.status(500).json({ error: err.message });
         res.json({ message: 'User updated' });
       });

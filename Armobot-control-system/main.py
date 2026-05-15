@@ -1,8 +1,7 @@
 import network
 import socket
 import time
-from machine import Pin
-import machine
+from machine import Pin, Timer
 import utime
 import json
 import gc
@@ -82,6 +81,11 @@ default_p2 = [40.0, 30.0, -30.0]
 continuous_run = False
 gripper_state = 'closed'  # track open/close for dashboard
 
+jog_timer = Timer(-1)
+jog_active = False
+jog_joint = None
+jog_direction = 1
+
 min_s2 = -20
 max_s2 = 70
 min_s3 = -90
@@ -105,6 +109,11 @@ def solve_d3(d2):
     d3_2 = d2 - (180 - asin_val)
     max_s3 = int(-d3_2)
     min_s3 = int(d3_1)
+    try:
+        joint3.minDegree = min_s3
+        joint3.maxDegree = max_s3
+    except NameError:
+        pass # joint3 not initialized yet during first boot
     print(f"Updated Stepper 3 range: min={min_s3}, max={max_s3}")
     return -d3_1, -d3_2
 
@@ -130,6 +139,11 @@ def solve_d2(d3_degrees):
         min_s2 = -20
     else:
         min_s2 = -int(d2_1)
+    try:
+        joint2.minDegree = min_s2
+        joint2.maxDegree = max_s2
+    except NameError:
+        pass
     print(f"Updated Stepper 2 range: min={min_s2}, max={max_s2}")
     return d2_1, d2_2
 
@@ -163,6 +177,41 @@ limit_switch_3 = Pin(2, Pin.IN, Pin.PULL_UP)
 # Global limit state
 limit_triggered = False
 limit_trigger_time = 0
+
+def jog_callback(t):
+    global jog_active, limit_triggered, limit_trigger_time
+    
+    if not jog_active or limit_triggered:
+        t.deinit()
+        jog_active = False
+        return
+
+    if any_limit_triggered():
+        limit_triggered = True
+        limit_trigger_time = time.ticks_ms()
+        print("🛑 Limit triggered! Stopping jog.")
+        t.deinit()
+        jog_active = False
+        return
+        
+    if jog_joint is None:
+        t.deinit()
+        jog_active = False
+        return
+        
+    delta_deg = (1 if jog_direction else -1) * (1.0 / jog_joint.degreeToPulseRatio)
+    future_deg = jog_joint.currentDegree + delta_deg
+    
+    if future_deg < jog_joint.minDegree or future_deg > jog_joint.maxDegree:
+        t.deinit()
+        jog_active = False
+        return
+        
+    jog_joint.pulsePin.value(1)
+    time.sleep_us(5)
+    jog_joint.pulsePin.value(0)
+    
+    jog_joint.currentDegree = future_deg
 
 
 def any_limit_triggered():
@@ -429,7 +478,7 @@ def pick_place_default():
 
 
 # ─────────────────────────── MOTOR COMMAND PATHS ────────────────────────────
-MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous']
+MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous', '/jog']
 
 
 def is_motor_path(path):
@@ -523,6 +572,47 @@ if __name__ == "__main__":
                 response = '{{"min":{},"max":{}}}'.format(min_s2, max_s2)
                 cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
                 cl.send(response.encode())
+
+            elif path.startswith('/status'):
+                response = '{{"s1":{}, "s2":{}, "s3":{}}}'.format(joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+                cl.send(response.encode())
+
+            elif path.startswith('/jog'):
+                parts = path.split('?')[1].split('&')
+                params = {}
+                for p in parts:
+                    if '=' in p:
+                        k, v = p.split('=')
+                        params[k] = v
+                
+                motor = int(params.get('motor', 1))
+                jtype = params.get('type', 'stop')
+                jdir = int(params.get('dir', 1))
+                
+                if jtype == 'start':
+                    if jog_active:
+                        jog_timer.deinit()
+                    jog_active = True
+                    jog_joint = joint1 if motor == 1 else (joint2 if motor == 2 else joint3)
+                    jog_direction = jdir
+                    jog_joint.dirPin.value(1 if jog_direction else 0)
+                    jog_timer.init(freq=625, mode=Timer.PERIODIC, callback=jog_callback)
+                    
+                elif jtype == 'stop':
+                    jog_timer.deinit()
+                    jog_active = False
+                    if motor == 2: solve_d3(joint2.currentDegree)
+                    if motor == 3: solve_d2(joint3.currentDegree)
+                    
+                elif jtype == 'step':
+                    j = joint1 if motor == 1 else (joint2 if motor == 2 else joint3)
+                    delta = (1 if jdir else -1) * 2
+                    move_stepper(j.currentDegree + delta, j)
+                    if motor == 2: solve_d3(j.currentDegree)
+                    if motor == 3: solve_d2(j.currentDegree)
+                
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nOK')
 
             elif path.startswith('/arnobot.png'):
                 try:
@@ -637,7 +727,7 @@ if __name__ == "__main__":
         if continuous_run and not limit_triggered:
             pick_place_default()
             time.sleep(2)
-
+            
         # ── Limit recovery check — runs every loop tick ──────────────────────
         handle_limit_recovery()
 
