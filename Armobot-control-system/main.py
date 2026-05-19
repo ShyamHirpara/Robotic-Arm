@@ -1,7 +1,7 @@
 import network
 import socket
 import time
-from machine import Pin, Timer
+from machine import Pin, Timer, time_pulse_us
 import utime
 import json
 import gc
@@ -169,6 +169,47 @@ def create_access_point():
     return ap
 
 
+# Ultrasonic Sensors
+us_right_trig = Pin(19, Pin.OUT)
+us_right_echo = Pin(20, Pin.IN)
+us_left_trig = Pin(17, Pin.OUT)
+us_left_echo = Pin(10, Pin.IN)
+
+dist_right = -1.0
+dist_left = -1.0
+
+def get_distance(trig, echo):
+    trig.value(0)
+    time.sleep_us(2)
+    trig.value(1)
+    time.sleep_us(10)
+    trig.value(0)
+    pulse_time = time_pulse_us(echo, 1, 30000)
+    if pulse_time < 0:
+        return -1
+    return (pulse_time * 0.0343) / 2
+
+# Emergency Button
+emergency_btn = Pin(16, Pin.IN, Pin.PULL_UP)
+
+def check_emergency():
+    if emergency_btn.value() == 1:
+        print("🚨 EMERGENCY HOLD TRIGGERED! All motors stopped.")
+        global jog_active
+        if jog_active:
+            try:
+                jog_timer.deinit()
+            except:
+                pass
+            jog_active = False
+            
+        while emergency_btn.value() == 1:
+            time.sleep_ms(50)
+            
+        print("✅ Emergency Hold Released")
+        return True
+    return False
+
 # Limit switches
 limit_switch_1 = Pin(4, Pin.IN, Pin.PULL_UP)
 limit_switch_2 = Pin(3, Pin.IN, Pin.PULL_UP)
@@ -181,7 +222,7 @@ limit_trigger_time = 0
 def jog_callback(t):
     global jog_active, limit_triggered, limit_trigger_time
     
-    if not jog_active or limit_triggered:
+    if not jog_active or limit_triggered or emergency_btn.value() == 1:
         t.deinit()
         jog_active = False
         return
@@ -215,10 +256,10 @@ def jog_callback(t):
 
 
 def any_limit_triggered():
-    """Check if any limit switch is currently active (HIGH = triggered with PULL_UP)"""
-    return (limit_switch_1.value() == 1 or
-            limit_switch_2.value() == 1 or
-            limit_switch_3.value() == 1)
+    """Check if any limit switch is currently active (LOW = triggered with PULL_UP)"""
+    return (limit_switch_1.value() == 0 or
+            limit_switch_2.value() == 0 or
+            limit_switch_3.value() == 0)
 
 
 def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
@@ -227,8 +268,8 @@ def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
     dirPin.value(1 if direction else 0)
     for _ in range(steps):
         # Stop if limit already triggered before this call
-        if limit_triggered:
-            print("⚠️ Movement blocked — previous limit still active.")
+        if limit_triggered or check_emergency():
+            print("⚠️ Movement blocked — previous limit or hold still active.")
             return
         # Check live switch state each step
         if any_limit_triggered():
@@ -245,8 +286,8 @@ def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
 def move_stepper(target_degree, joint: Joint):
     """Move a joint to target_degree. Silently blocked if limit_triggered."""
     global limit_triggered
-    if limit_triggered:
-        print("⚠️ Movement blocked — limit switch lockout active.")
+    if limit_triggered or check_emergency():
+        print("⚠️ Movement blocked — limit switch lockout or hold active.")
         return
 
     target_degree = max(min(target_degree, joint.maxDegree), joint.minDegree)
@@ -310,6 +351,9 @@ def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
     print("🔧 Calibrating steppers...")
 
     while not (done1 and done2 and done3):
+        if check_emergency():
+            print("🚨 EMERGENCY HOLD! Aborting calibration.")
+            return
         now = time.ticks_us()
 
         # --- Joint 1 ---
@@ -574,7 +618,8 @@ if __name__ == "__main__":
                 cl.send(response.encode())
 
             elif path.startswith('/status'):
-                response = '{{"s1":{}, "s2":{}, "s3":{}}}'.format(joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+                response = '{{"s1":{}, "s2":{}, "s3":{}, "dist_right":{:.1f}, "dist_left":{:.1f}, "emergency":{}}}'.format(
+                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree, dist_right, dist_left, "true" if emergency_btn.value() == 1 else "false")
                 cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
                 cl.send(response.encode())
 
@@ -724,12 +769,20 @@ if __name__ == "__main__":
                     pass
 
         # ── Continuous run (only when not in limit lockout) ──────────────────
-        if continuous_run and not limit_triggered:
+        if continuous_run and not limit_triggered and emergency_btn.value() == 0:
             pick_place_default()
             time.sleep(2)
             
+        # ── Ultrasonic Distance Measurement ──────────────────────────────────────
+        dist_right = get_distance(us_right_trig, us_right_echo)
+        dist_left = get_distance(us_left_trig, us_left_echo)
+
         # ── Limit recovery check — runs every loop tick ──────────────────────
         handle_limit_recovery()
 
+        # ── Emergency blocking loop check ───────────────────────────────────
+        check_emergency()
+
         gc.collect()
         time.sleep_ms(50)  # Yield — keeps loop ~20Hz without burning CPU
+
