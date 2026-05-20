@@ -53,7 +53,7 @@ class Joint:
         self.currentDegree = 0
 
     def jointDir(self, value):
-        self.dirPin.value(value)
+        self.dirPin.value(0 if value else 1)
 
     def jointPul(self, value):
         self.pulsePin.value(value)
@@ -170,10 +170,10 @@ def create_access_point():
 
 
 # Ultrasonic Sensors
-us_right_trig = Pin(19, Pin.OUT)
-us_right_echo = Pin(20, Pin.IN)
-us_left_trig = Pin(17, Pin.OUT)
-us_left_echo = Pin(10, Pin.IN)
+us_right_trig = Pin(18, Pin.OUT)
+us_right_echo = Pin(19, Pin.IN)
+us_left_trig = Pin(20, Pin.OUT)
+us_left_echo = Pin(21, Pin.IN)
 
 dist_right = -1.0
 dist_left = -1.0
@@ -211,9 +211,9 @@ def check_emergency():
     return False
 
 # Limit switches
-limit_switch_1 = Pin(4, Pin.IN, Pin.PULL_UP)
-limit_switch_2 = Pin(3, Pin.IN, Pin.PULL_UP)
-limit_switch_3 = Pin(2, Pin.IN, Pin.PULL_UP)
+limit_switch_1 = Pin(3, Pin.IN, Pin.PULL_UP)
+limit_switch_2 = Pin(2, Pin.IN, Pin.PULL_UP)
+limit_switch_3 = Pin(4, Pin.IN, Pin.PULL_UP)
 
 # Global limit state
 limit_triggered = False
@@ -265,7 +265,7 @@ def any_limit_triggered():
 def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
     """Step motor with per-step limit switch checking. Stops immediately on trigger."""
     global limit_triggered, limit_trigger_time
-    dirPin.value(1 if direction else 0)
+    dirPin.value(0 if direction else 1)
     for _ in range(steps):
         # Stop if limit already triggered before this call
         if limit_triggered or check_emergency():
@@ -330,9 +330,9 @@ def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
     Non-blocking concurrent calibration of all 3 joints.
     Each joint goes to its limit switch then backs off to zero position.
     """
-    joint1.jointDir(1)
-    joint2.jointDir(0)
-    joint3.jointDir(1)
+    joint1.jointDir(0)
+    joint2.jointDir(1)
+    joint3.jointDir(0)
 
     phase1 = "forward"
     phase2 = "backward"
@@ -360,7 +360,7 @@ def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
         if not done1:
             if phase1 == "forward":
                 if limit_switch_1.value() == 1:
-                    joint1.jointDir(0)
+                    joint1.jointDir(1)
                     phase1 = "backward"
                     steps_1_back_done = 0
                 elif time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
@@ -383,7 +383,7 @@ def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
             if phase2 == "backward":
                 if limit_switch_2.value() == 1:
                     print("trigger limit 2")
-                    joint2.jointDir(1)
+                    joint2.jointDir(0)
                     phase2 = "forward"
                     steps_2_forward_done = 0
                 elif time.ticks_diff(now, last_step_time_2) >= pulse_delay_2:
@@ -405,7 +405,7 @@ def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
         if not done3:
             if phase3 == "backward":
                 if limit_switch_3.value() == 1:
-                    joint3.jointDir(0)
+                    joint3.jointDir(1)
                     phase3 = "forward"
                     steps_3_forward_done = 0
                 elif time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
@@ -641,7 +641,7 @@ if __name__ == "__main__":
                     jog_active = True
                     jog_joint = joint1 if motor == 1 else (joint2 if motor == 2 else joint3)
                     jog_direction = jdir
-                    jog_joint.dirPin.value(1 if jog_direction else 0)
+                    jog_joint.dirPin.value(0 if jog_direction else 1)
                     jog_timer.init(freq=625, mode=Timer.PERIODIC, callback=jog_callback)
                     
                 elif jtype == 'stop':
