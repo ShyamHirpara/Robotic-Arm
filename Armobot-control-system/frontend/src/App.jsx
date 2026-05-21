@@ -68,9 +68,7 @@ function App() {
                 <div className="dot"></div>
                 <span className="otxt">SYSTEM ONLINE</span>
               </div>
-              {systemState.limit_triggered && (
-                <div className="lalert">LIMIT TRIGGERED — Movement blocked. Auto-calibration in progress.</div>
-              )}
+
               <main className="page">
                 <p className="slbl">Live Dashboard</p>
                 <Dashboard state={systemState} />

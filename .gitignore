@@ -64,6 +64,5 @@ armobot_db.sqlite
 Thumbs.db
 /references/
 /old_versions/
-checkpoint*.md
-main_context.md
+*.md
 *.gitignore

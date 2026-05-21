@@ -1,7 +1,7 @@
 import network
 import socket
 import time
-from machine import Pin, Timer, time_pulse_us
+from machine import Pin, Timer, time_pulse_us, PWM
 import utime
 import json
 import gc
@@ -23,7 +23,7 @@ AP_PASSWORD = '12345678'
 
 class Gripper:
     def __init__(self):
-        SERVO_PIN = 21
+        SERVO_PIN = 26
         self.servo = machine.PWM(machine.Pin(SERVO_PIN))
         self.servo.freq(50)
         self.MIN_DUTY = 1638
@@ -60,17 +60,17 @@ class Joint:
 
 
 # Stepper parameters
-maxDegree1 = 175.0
+maxDegree1 = 150.0
 minDegree1 = -175.0
 maxPulse1 = 3875
 
-minDegree2 = -30.0
-maxDegree2 = 110.0
+minDegree2 = -20.0
+maxDegree2 = 70.0
 degreeToPulseRatio2 = 2625.0 / 90.0
 
 pulsesPerDegree3 = 2500.0 / 90.0
-minDegree3 = -90.0
-maxDegree3 = 80.0
+minDegree3 = -85.0
+maxDegree3 = 85.0
 
 saved_movement_1 = []
 saved_movement_2 = []
@@ -81,15 +81,11 @@ default_p2 = [40.0, 30.0, -30.0]
 continuous_run = False
 gripper_state = 'closed'  # track open/close for dashboard
 
-jog_timer = Timer(-1)
-jog_active = False
-jog_joint = None
-jog_direction = 1
 
 min_s2 = -20
 max_s2 = 70
-min_s3 = -90
-max_s3 = 90
+min_s3 = -85
+max_s3 = 85
 
 import math
 
@@ -195,14 +191,6 @@ emergency_btn = Pin(16, Pin.IN, Pin.PULL_UP)
 def check_emergency():
     if emergency_btn.value() == 1:
         print("🚨 EMERGENCY HOLD TRIGGERED! All motors stopped.")
-        global jog_active
-        if jog_active:
-            try:
-                jog_timer.deinit()
-            except:
-                pass
-            jog_active = False
-            
         while emergency_btn.value() == 1:
             time.sleep_ms(50)
             
@@ -215,67 +203,68 @@ limit_switch_1 = Pin(3, Pin.IN, Pin.PULL_UP)
 limit_switch_2 = Pin(2, Pin.IN, Pin.PULL_UP)
 limit_switch_3 = Pin(4, Pin.IN, Pin.PULL_UP)
 
+# --- LIMIT SWITCH CALIBRATION ANGLES ---
+# Edit these variables to change the exact angle (in degrees) 
+# where the limit switch physically triggers.
+# NOTE: If a joint's limit switch is on the negative side (e.g. minDegree),
+# use a negative number here (like -20.0 instead of 20.0).
+LIMIT_ANGLE_1 = 155.0
+LIMIT_ANGLE_2 = -25.0
+LIMIT_ANGLE_3 = 90.0
+
 # Global limit state
 limit_triggered = False
 limit_trigger_time = 0
+is_calibrating = False
+motion_interrupted = False
+calib_hit_1 = False
+calib_hit_2 = False
+calib_hit_3 = False
 
-def jog_callback(t):
-    global jog_active, limit_triggered, limit_trigger_time
-    
-    if not jog_active or limit_triggered or emergency_btn.value() == 1:
-        t.deinit()
-        jog_active = False
-        return
-
-    if any_limit_triggered():
-        limit_triggered = True
-        limit_trigger_time = time.ticks_ms()
-        print("🛑 Limit triggered! Stopping jog.")
-        t.deinit()
-        jog_active = False
-        return
-        
-    if jog_joint is None:
-        t.deinit()
-        jog_active = False
-        return
-        
-    delta_deg = (1 if jog_direction else -1) * (1.0 / jog_joint.degreeToPulseRatio)
-    future_deg = jog_joint.currentDegree + delta_deg
-    
-    if future_deg < jog_joint.minDegree or future_deg > jog_joint.maxDegree:
-        t.deinit()
-        jog_active = False
-        return
-        
-    jog_joint.pulsePin.value(1)
-    time.sleep_us(5)
-    jog_joint.pulsePin.value(0)
-    
-    jog_joint.currentDegree = future_deg
-
-
-def any_limit_triggered():
-    """Check if any limit switch is currently active (LOW = triggered with PULL_UP)"""
-    return (limit_switch_1.value() == 0 or
-            limit_switch_2.value() == 0 or
-            limit_switch_3.value() == 0)
-
-
-def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
-    """Step motor with per-step limit switch checking. Stops immediately on trigger."""
-    global limit_triggered, limit_trigger_time
-    dirPin.value(0 if direction else 1)
-    for _ in range(steps):
-        # Stop if limit already triggered before this call
-        if limit_triggered or check_emergency():
-            print("⚠️ Movement blocked — previous limit or hold still active.")
-            return
-        # Check live switch state each step
-        if any_limit_triggered():
+def limit1_isr(pin):
+    global motion_interrupted, calib_hit_1, limit_triggered, limit_trigger_time
+    if pin.value() == 0:
+        print(f"🛑 Limit 1 Triggered! Actual angle before reset: {joint1.currentDegree}°")
+        if is_calibrating:
+            calib_hit_1 = True
+        else:
             limit_triggered = True
             limit_trigger_time = time.ticks_ms()
-            print("🛑 Limit triggered! Stopping motor immediately.")
+            motion_interrupted = True
+            joint1.currentDegree = LIMIT_ANGLE_1
+
+def limit2_isr(pin):
+    global motion_interrupted, calib_hit_2, limit_triggered, limit_trigger_time
+    if pin.value() == 0:
+        print(f"🛑 Limit 2 Triggered! Actual angle before reset: {joint2.currentDegree}°")
+        if is_calibrating:
+            calib_hit_2 = True
+        else:
+            limit_triggered = True
+            limit_trigger_time = time.ticks_ms()
+            motion_interrupted = True
+            joint2.currentDegree = LIMIT_ANGLE_2
+
+def limit3_isr(pin):
+    global motion_interrupted, calib_hit_3, limit_triggered, limit_trigger_time
+    if pin.value() == 0:
+        print(f"🛑 Limit 3 Triggered! Actual angle before reset: {joint3.currentDegree}°")
+        if is_calibrating:
+            calib_hit_3 = True
+        else:
+            limit_triggered = True
+            limit_trigger_time = time.ticks_ms()
+            motion_interrupted = True
+            joint3.currentDegree = LIMIT_ANGLE_3
+
+def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
+    """Step motor with interrupt checking. Stops immediately on trigger."""
+    global limit_triggered, limit_trigger_time, motion_interrupted
+    dirPin.value(0 if direction else 1)
+    for _ in range(steps):
+        if limit_triggered or check_emergency() or motion_interrupted:
+            print("⚠️ Movement blocked — interrupt limit or hold active.")
+            motion_interrupted = False
             return
         pulPin.value(1)
         time.sleep_us(delay_step)
@@ -306,132 +295,134 @@ def move_stepper(target_degree, joint: Joint):
     print(f"Joint moved to: {joint.currentDegree}°")
 
 
-def handle_limit_recovery():
-    """
-    Called every main loop tick.
-    - If limit_triggered and 10 seconds have elapsed → auto-calibrate and reset.
-    """
-    global limit_triggered, limit_trigger_time
 
-    if not limit_triggered:
-        return
-
-    elapsed = time.ticks_diff(time.ticks_ms(), limit_trigger_time)
-    if elapsed >= 10000:  # 10 seconds
-        print("⏳ 10 sec elapsed. Starting auto-recalibration...")
-        calibrate_steppers(joint1, joint2, joint3)
-        limit_triggered = False
-        limit_trigger_time = 0
-        print("✅ Limit reset. System ready.")
 
 
 def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
     """
     Non-blocking concurrent calibration of all 3 joints.
-    Each joint goes to its limit switch then backs off to zero position.
+    Each joint goes to its limit switch, updates to max angle, then goes to 0.
     """
-    joint1.jointDir(0)
-    joint2.jointDir(1)
-    joint3.jointDir(0)
+    global is_calibrating, calib_hit_1, calib_hit_2, calib_hit_3
+    is_calibrating = True
+    calib_hit_1 = False
+    calib_hit_2 = False
+    calib_hit_3 = False
 
-    phase1 = "forward"
-    phase2 = "backward"
-    phase3 = "backward"
+    state1 = 0
+    state2 = 0
+    state3 = 0
 
-    target_steps_1_back = int(153 / (joint1.maxDegree / joint1.maxPulse))
-    target_steps_2_forward = int(31 * joint2.degreeToPulseRatio)
-    target_steps_3_forward = int(85 * joint3.degreeToPulseRatio)
-
-    steps_1_back_done = steps_2_forward_done = steps_3_forward_done = 0
-    done1 = done2 = done3 = False
+    steps_to_zero_1 = steps_to_zero_2 = steps_to_zero_3 = 0
+    steps_done_1 = steps_done_2 = steps_done_3 = 0
 
     last_step_time_1 = last_step_time_2 = last_step_time_3 = time.ticks_us()
-    pulse_delay_1 = pulse_delay_2 = pulse_delay_3 = 400
+    pulse_delay_1 = pulse_delay_2 = pulse_delay_3 = 533
 
-    print("🔧 Calibrating steppers...")
+    print("🔧 Calibrating steppers concurrently at 75% speed...")
 
-    while not (done1 and done2 and done3):
+    while not (state1 == 2 and state2 == 2 and state3 == 2):
         if check_emergency():
             print("🚨 EMERGENCY HOLD! Aborting calibration.")
+            is_calibrating = False
             return
         now = time.ticks_us()
 
-        # --- Joint 1 ---
-        if not done1:
-            if phase1 == "forward":
-                if limit_switch_1.value() == 1:
-                    joint1.jointDir(1)
-                    phase1 = "backward"
-                    steps_1_back_done = 0
-                elif time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
-                    joint1.jointPul(1)
+        # --- Joint 3 (First) ---
+        if state3 != 2:
+            if state3 == 0:
+                if calib_hit_3:
+                    joint3.currentDegree = LIMIT_ANGLE_3
+                    joint3.jointDir(0)
+                    steps_to_zero_3 = int(abs(LIMIT_ANGLE_3) * joint3.degreeToPulseRatio)
+                    steps_done_3 = 0
+                    state3 = 1
+                    print(f"Joint 3 reversing to 0. Steps required: {steps_to_zero_3}")
+                elif time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
+                    joint3.jointDir(1)
+                    joint3.jointPul(1)
                     time.sleep_us(delay)
-                    joint1.jointPul(0)
-                    last_step_time_1 = now
-            elif phase1 == "backward" and steps_1_back_done < target_steps_1_back:
-                if time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
-                    joint1.jointPul(1)
-                    time.sleep_us(delay)
-                    joint1.jointPul(0)
-                    steps_1_back_done += 1
-                    last_step_time_1 = now
-            else:
-                done1 = True
+                    joint3.jointPul(0)
+                    last_step_time_3 = now
+            elif state3 == 1:
+                if steps_done_3 < steps_to_zero_3:
+                    if time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
+                        joint3.jointPul(1)
+                        time.sleep_us(delay)
+                        joint3.jointPul(0)
+                        steps_done_3 += 1
+                        last_step_time_3 = now
+                else:
+                    joint3.currentDegree = 0
+                    state3 = 2
+                    print("Joint 3 calibration complete.")
 
         # --- Joint 2 ---
-        if not done2:
-            if phase2 == "backward":
-                if limit_switch_2.value() == 1:
-                    print("trigger limit 2")
-                    joint2.jointDir(0)
-                    phase2 = "forward"
-                    steps_2_forward_done = 0
+        if state2 != 2:
+            if state2 == 0:
+                if calib_hit_2:
+                    joint2.currentDegree = LIMIT_ANGLE_2
+                    joint2.jointDir(1)
+                    steps_to_zero_2 = int(abs(LIMIT_ANGLE_2) * joint2.degreeToPulseRatio)
+                    steps_done_2 = 0
+                    state2 = 1
+                    print(f"Joint 2 reversing to 0. Steps required: {steps_to_zero_2}")
                 elif time.ticks_diff(now, last_step_time_2) >= pulse_delay_2:
+                    joint2.jointDir(0)
                     joint2.jointPul(1)
                     time.sleep_us(delay)
                     joint2.jointPul(0)
                     last_step_time_2 = now
-            elif phase2 == "forward" and steps_2_forward_done < target_steps_2_forward:
-                if time.ticks_diff(now, last_step_time_2) >= 400:
-                    joint2.jointPul(1)
-                    time.sleep_us(delay)
-                    joint2.jointPul(0)
-                    steps_2_forward_done += 1
-                    last_step_time_2 = now
-            else:
-                done2 = True
+            elif state2 == 1:
+                if steps_done_2 < steps_to_zero_2:
+                    if time.ticks_diff(now, last_step_time_2) >= pulse_delay_2:
+                        joint2.jointPul(1)
+                        time.sleep_us(delay)
+                        joint2.jointPul(0)
+                        steps_done_2 += 1
+                        last_step_time_2 = now
+                else:
+                    joint2.currentDegree = 0
+                    state2 = 2
+                    print("Joint 2 calibration complete.")
 
-        # --- Joint 3 ---
-        if not done3:
-            if phase3 == "backward":
-                if limit_switch_3.value() == 1:
-                    joint3.jointDir(1)
-                    phase3 = "forward"
-                    steps_3_forward_done = 0
-                elif time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
-                    joint3.jointPul(1)
+        # --- Joint 1 ---
+        if state1 != 2:
+            if state1 == 0:
+                if calib_hit_1:
+                    joint1.currentDegree = LIMIT_ANGLE_1
+                    joint1.jointDir(0)
+                    steps_to_zero_1 = int(abs(LIMIT_ANGLE_1) * joint1.degreeToPulseRatio)
+                    steps_done_1 = 0
+                    state1 = 1
+                    print(f"Joint 1 reversing to 0. Steps required: {steps_to_zero_1}")
+                elif time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
+                    joint1.jointDir(1)
+                    joint1.jointPul(1)
                     time.sleep_us(delay)
-                    joint3.jointPul(0)
-                    last_step_time_3 = now
-            elif phase3 == "forward" and steps_3_forward_done < target_steps_3_forward:
-                if time.ticks_diff(now, last_step_time_3) >= 400:
-                    joint3.jointPul(1)
-                    time.sleep_us(delay)
-                    joint3.jointPul(0)
-                    steps_3_forward_done += 1
-                    last_step_time_3 = now
-            else:
-                done3 = True
+                    joint1.jointPul(0)
+                    last_step_time_1 = now
+            elif state1 == 1:
+                if steps_done_1 < steps_to_zero_1:
+                    if time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
+                        joint1.jointPul(1)
+                        time.sleep_us(delay)
+                        joint1.jointPul(0)
+                        steps_done_1 += 1
+                        last_step_time_1 = now
+                else:
+                    joint1.currentDegree = 0
+                    state1 = 2
+                    print("Joint 1 calibration complete.")
 
-    joint1.currentDegree = 0
-    joint2.currentDegree = 0
-    joint3.currentDegree = 0
+    is_calibrating = False
     print("✅ Calibration complete!")
 
 
+def send_chunked_response(cl, response, content_type="text/html"):
     """Send HTTP response in small chunks without encoding full string at once."""
     try:
-        cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/html\r\n\r\n')
+        cl.send(f'HTTP/1.0 200 OK\r\nContent-type: {content_type}\r\n\r\n'.encode())
         chunk_size = 256
         start = 0
         total = len(response)
@@ -522,20 +513,12 @@ def pick_place_default():
 
 
 # ─────────────────────────── MOTOR COMMAND PATHS ────────────────────────────
-MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous', '/jog']
+MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous']
 
 
 def is_motor_path(path):
     return any(path.startswith(p) for p in MOTOR_PATHS)
 
-
-def send_limit_blocked(cl):
-    """Send a plain-text blocked response when limit is active."""
-    elapsed = time.ticks_diff(time.ticks_ms(), limit_trigger_time)
-    remaining = max(0, (10000 - elapsed) // 1000)
-    msg = f'LIMIT TRIGGERED — Movement blocked. Auto-calibration in {remaining}s.'.encode()
-    cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\n')
-    cl.send(msg)
 
 
 # ──────────────────────────────── MAIN ──────────────────────────────────────
@@ -544,9 +527,14 @@ if __name__ == "__main__":
 
     gripper = Gripper()
 
-    joint1 = Joint(dir=9,  pulse=11, minDegree=-175, maxDegree=175, maxPulse=3875, degreeToPulseRatio=3875/175)
+    joint1 = Joint(dir=9,  pulse=11, minDegree=-175, maxDegree=150, maxPulse=3875, degreeToPulseRatio=3875/175)
     joint2 = Joint(dir=7,  pulse=13, minDegree=-20,  maxDegree=70,  maxPulse=3875, degreeToPulseRatio=2625/90)
-    joint3 = Joint(dir=14, pulse=15, minDegree=-90,  maxDegree=90,  maxPulse=3875, degreeToPulseRatio=2500/90)
+    joint3 = Joint(dir=14, pulse=15, minDegree=-85,  maxDegree=85,  maxPulse=3875, degreeToPulseRatio=2500/90)
+
+    # Attach interrupt handlers to limits
+    limit_switch_1.irq(trigger=Pin.IRQ_FALLING, handler=limit1_isr)
+    limit_switch_2.irq(trigger=Pin.IRQ_FALLING, handler=limit2_isr)
+    limit_switch_3.irq(trigger=Pin.IRQ_FALLING, handler=limit3_isr)
 
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
@@ -565,6 +553,10 @@ if __name__ == "__main__":
             request = cl.recv(1024).decode()
             path = request.split(' ')[1]
             print("Request:", path)
+
+            if is_motor_path(path):
+                global limit_triggered
+                limit_triggered = False
 
             # ── Serve image ─────────────────────────────────────────────────
             if path.startswith('/arnobot.jpeg'):
@@ -587,10 +579,6 @@ if __name__ == "__main__":
                 except Exception as e:
                     print(f'Image error: {e}')
                     cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
-
-            # ── Block all motor commands if limit is triggered ───────────────
-            elif limit_triggered and is_motor_path(path):
-                send_limit_blocked(cl)
 
             # ── Stepper control ─────────────────────────────────────────────
             elif path.startswith('/stepper'):
@@ -622,42 +610,6 @@ if __name__ == "__main__":
                     joint1.currentDegree, joint2.currentDegree, joint3.currentDegree, dist_right, dist_left, "true" if emergency_btn.value() == 1 else "false")
                 cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
                 cl.send(response.encode())
-
-            elif path.startswith('/jog'):
-                parts = path.split('?')[1].split('&')
-                params = {}
-                for p in parts:
-                    if '=' in p:
-                        k, v = p.split('=')
-                        params[k] = v
-                
-                motor = int(params.get('motor', 1))
-                jtype = params.get('type', 'stop')
-                jdir = int(params.get('dir', 1))
-                
-                if jtype == 'start':
-                    if jog_active:
-                        jog_timer.deinit()
-                    jog_active = True
-                    jog_joint = joint1 if motor == 1 else (joint2 if motor == 2 else joint3)
-                    jog_direction = jdir
-                    jog_joint.dirPin.value(0 if jog_direction else 1)
-                    jog_timer.init(freq=625, mode=Timer.PERIODIC, callback=jog_callback)
-                    
-                elif jtype == 'stop':
-                    jog_timer.deinit()
-                    jog_active = False
-                    if motor == 2: solve_d3(joint2.currentDegree)
-                    if motor == 3: solve_d2(joint3.currentDegree)
-                    
-                elif jtype == 'step':
-                    j = joint1 if motor == 1 else (joint2 if motor == 2 else joint3)
-                    delta = (1 if jdir else -1) * 2
-                    move_stepper(j.currentDegree + delta, j)
-                    if motor == 2: solve_d3(j.currentDegree)
-                    if motor == 3: solve_d2(j.currentDegree)
-                
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nOK')
 
             elif path.startswith('/arnobot.png'):
                 try:
@@ -777,12 +729,9 @@ if __name__ == "__main__":
         dist_right = get_distance(us_right_trig, us_right_echo)
         dist_left = get_distance(us_left_trig, us_left_echo)
 
-        # ── Limit recovery check — runs every loop tick ──────────────────────
-        handle_limit_recovery()
-
         # ── Emergency blocking loop check ───────────────────────────────────
         check_emergency()
 
         gc.collect()
-        time.sleep_ms(50)  # Yield — keeps loop ~20Hz without burning CPU
+        time.sleep_ms(5)  # Yield — keeps loop ~200Hz without burning CPU
 
