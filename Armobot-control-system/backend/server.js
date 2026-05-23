@@ -1,10 +1,17 @@
 const express = require('express');
+const http = require('http');
+const { Server } = require('socket.io');
+const net = require('net');
 const sqlite3 = require('sqlite3').verbose();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const cors = require('cors');
 
 const app = express();
+const server = http.createServer(app);
+const io = new Server(server, {
+  cors: { origin: '*', methods: ['GET', 'POST'] }
+});
 app.use(cors());
 app.use(express.json());
 
@@ -149,6 +156,69 @@ app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
+// --- Pico W TCP Bridge ---
+const PICO_IP = '192.168.4.1';
+const PICO_PORT = 81;
+let picoSocket = null;
+
+function connectToPico() {
+  if (picoSocket) return;
+  picoSocket = new net.Socket();
+  
+  picoSocket.connect(PICO_PORT, PICO_IP, () => {
+    console.log(`Connected to Pico W TCP Bridge at ${PICO_IP}:${PICO_PORT}`);
+  });
+
+  picoSocket.on('data', (data) => {
+    try {
+      const stateStr = data.toString().trim();
+      if (stateStr) {
+        // Broadcast the raw string or parsed JSON to all connected clients
+        io.emit('robot_state', stateStr);
+      }
+    } catch (e) {
+      console.error('Error parsing Pico data:', e);
+    }
+  });
+
+  picoSocket.on('error', (err) => {
+    console.error(`Pico TCP Error: ${err.message}`);
+    picoSocket.destroy();
+  });
+
+  picoSocket.on('close', () => {
+    console.log('Pico TCP connection closed. Retrying in 2 seconds...');
+    picoSocket = null;
+    setTimeout(connectToPico, 2000);
+  });
+}
+
+// Start persistent connection
+connectToPico();
+
+// --- WebSocket Event Handling ---
+io.on('connection', (socket) => {
+  console.log(`Frontend client connected via WebSocket: ${socket.id}`);
+  
+  socket.on('jog_start', (data) => {
+    // data: { axis: 1, dir: 0 }
+    if (picoSocket && !picoSocket.destroyed) {
+      picoSocket.write(`START_${data.axis}_${data.dir}\n`);
+    }
+  });
+
+  socket.on('jog_stop', () => {
+    if (picoSocket && !picoSocket.destroyed) {
+      picoSocket.write(`STOP\n`);
+    }
+  });
+
+  socket.on('disconnect', () => {
+    console.log(`Client disconnected: ${socket.id}`);
+  });
+});
+
+
+server.listen(PORT, () => {
   console.log(`Backend server running on http://localhost:${PORT}`);
 });

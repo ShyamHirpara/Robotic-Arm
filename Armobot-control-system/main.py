@@ -1,12 +1,20 @@
 import network
 import socket
 import time
-from machine import Pin, Timer, time_pulse_us, PWM
-import utime
-import json
+import math
+import micropython
 import gc
+import utime
+from machine import Pin, PWM, time_pulse_us
+from stepper import Stepper
 
-delay = 400
+# ─────────────────────────── INSTALL NOTE ────────────────────────────────────
+# Install micropython-stepper on your Pico W before running this file.
+# In the Thonny REPL run:
+#   import mip
+#   mip.install("github:redoxcode/micropython-stepper")
+# This installs lib/stepper/__init__.py and lib/stepper/__main__.py
+# ─────────────────────────────────────────────────────────────────────────────
 
 # Import DNS Server for captive portal
 try:
@@ -17,14 +25,14 @@ except:
     print("⚠️ DNS server not available")
 
 # Access Point credentials
-AP_SSID = 'RoboticArm_AP'
+AP_SSID     = 'RoboticArm_AP'
 AP_PASSWORD = '12345678'
 
 
+# ─────────────────────────── GRIPPER ─────────────────────────────────────────
 class Gripper:
     def __init__(self):
-        SERVO_PIN = 26
-        self.servo = machine.PWM(machine.Pin(SERVO_PIN))
+        self.servo = PWM(Pin(26))
         self.servo.freq(50)
         self.MIN_DUTY = 1638
         self.MAX_DUTY = 8192
@@ -42,62 +50,99 @@ class Gripper:
         utime.sleep_ms(500)
 
 
+# ─────────────────────────── JOINT ───────────────────────────────────────────
 class Joint:
-    def __init__(self, dir, pulse, maxDegree, minDegree, maxPulse, degreeToPulseRatio):
-        self.dirPin = Pin(dir, Pin.OUT)
-        self.pulsePin = Pin(pulse, Pin.OUT)
-        self.maxDegree = maxDegree
-        self.minDegree = minDegree
-        self.degreeToPulseRatio = degreeToPulseRatio
-        self.maxPulse = maxPulse
-        self.currentDegree = 0
+    """
+    Wraps micropython-stepper Stepper with degree-based limits.
 
-    def jointDir(self, value):
-        self.dirPin.value(0 if value else 1)
+    steps_per_rev = degreeToPulseRatio × 360
+      J1: (3875/175) × 360 ≈ 7971
+      J2: (2625/90)  × 360 ≈ 10500
+      J3: (2500/90)  × 360 ≈ 10000
 
-    def jointPul(self, value):
-        self.pulsePin.value(value)
+    invert_dir=True because the hardware wires positive direction to dirPin LOW (0),
+    while the Stepper library defaults to dirPin HIGH for positive steps.
+    Adjust per joint if direction is wrong after testing.
+
+    jog_sps  — steps/sec during jogging  (≈ 45°/s for J1, 30°/s for J2, 40°/s for J3)
+    calib_sps — steps/sec during calibration (75% of jog_sps)
+    timer_id — always use -1 on Pico W (RP2040 only supports software timers via Timer(-1))
+    """
+    def __init__(self, step_pin, dir_pin, min_deg, max_deg,
+                 steps_per_rev, jog_sps=1000, calib_sps=750,
+                 timer_id=-1, invert_dir=True):
+        self.stepper        = Stepper(step_pin, dir_pin,
+                                      steps_per_rev=steps_per_rev,
+                                      speed_sps=jog_sps,
+                                      invert_dir=invert_dir,
+                                      timer_id=timer_id)
+        self.minDegree      = min_deg
+        self.maxDegree      = max_deg
+        self._steps_per_rev = steps_per_rev
+        self._jog_sps       = jog_sps
+        self._calib_sps     = calib_sps
+
+    @property
+    def currentDegree(self):
+        """Read live position from the stepper's internal step counter."""
+        return self.stepper._pos * 360.0 / self._steps_per_rev
+
+    @currentDegree.setter
+    def currentDegree(self, val):
+        """
+        Force-set position (e.g. after limit switch hit or calibration).
+        Calls overwrite_pos() which syncs both pos and target_pos in the library.
+        """
+        self.stepper.overwrite_pos(round(val * self._steps_per_rev / 360.0))
 
 
-# Stepper parameters
-maxDegree1 = 150.0
-minDegree1 = -175.0
-maxPulse1 = 3875
+# ─────────────────────────── CONSTANTS ───────────────────────────────────────
+# Angles set after each joint hits its limit switch during calibration.
+LIMIT_ANGLE_1 =  155.0   # J1 positive limit
+LIMIT_ANGLE_2 =  -25.0   # J2 negative limit
+LIMIT_ANGLE_3 =   90.0   # J3 positive limit
 
-minDegree2 = -20.0
-maxDegree2 = 70.0
-degreeToPulseRatio2 = 2625.0 / 90.0
+# ─────────────────────────── GLOBAL STATE ────────────────────────────────────
+limit_triggered = False
+is_calibrating  = False
+calib_hit_1     = False
+calib_hit_2     = False
+calib_hit_3     = False
 
-pulsesPerDegree3 = 2500.0 / 90.0
-minDegree3 = -85.0
-maxDegree3 = 85.0
+# Populated after joint init — used by stop_all_motors() / check_emergency()
+all_joints = []
 
+continuous_run   = False
+gripper_state    = 'closed'
 saved_movement_1 = []
 saved_movement_2 = []
 
 default_p1 = [-50.0, 50.0, -20.0]
-default_p2 = [40.0, 30.0, -30.0]
+default_p2 = [ 40.0, 30.0, -30.0]
 
-continuous_run = False
-gripper_state = 'closed'  # track open/close for dashboard
-
-
+# Dynamic kinematic limits (updated by solve_d2 / solve_d3)
 min_s2 = -20
 max_s2 = 70
 min_s3 = -85
 max_s3 = 85
 
-import math
+dist_right = -1.0
+dist_left  = -1.0
 
+# ─────────────────────────── JOG CONTROLLER STATE ───────────────────────────
+jog_axis = 0   # index of last jogged joint (1/2/3); used for post-stop kinematics
+
+# ─────────────────────────── KINEMATICS ──────────────────────────────────────
 l1 = 18
 l2 = 21
 l3 = 35
 
 
 def solve_d3(d2):
+    """Update joint3's dynamic limits based on joint2 position."""
     global max_s3, min_s3
     d2_rad = math.radians(d2)
-    value = (l1 + l2 * math.cos(d2_rad)) / l3
+    value  = (l1 + l2 * math.cos(d2_rad)) / l3
     if value > 1 or value < -1:
         return None
     asin_val = math.degrees(math.asin(value))
@@ -109,41 +154,35 @@ def solve_d3(d2):
         joint3.minDegree = min_s3
         joint3.maxDegree = max_s3
     except NameError:
-        pass # joint3 not initialized yet during first boot
-    print(f"Updated Stepper 3 range: min={min_s3}, max={max_s3}")
+        pass
     return -d3_1, -d3_2
 
 
 def solve_d2(d3_degrees):
+    """Update joint2's dynamic limits based on joint3 position."""
     global max_s2, min_s2
-    d3 = math.radians(d3_degrees)
-    a = l2 + l3 * math.sin(d3)
-    b = l3 * math.cos(d3)
-    c = -l1
-    R = math.sqrt(a * a + b * b)
+    d3  = math.radians(d3_degrees)
+    a   = l2 + l3 * math.sin(d3)
+    b   = l3 * math.cos(d3)
+    c   = -l1
+    R   = math.sqrt(a * a + b * b)
     if abs(c) > R:
         return None
-    phi = math.atan2(b, a)
-    psi = math.acos(c / R)
+    phi  = math.atan2(b, a)
+    psi  = math.acos(c / R)
     d2_1 = math.degrees(phi + psi)
     d2_2 = math.degrees(phi - psi)
-    if -int(d2_2) > 70:
-        max_s2 = 70
-    else:
-        max_s2 = -int(d2_2) - 5
-    if -int(d2_1) < -20:
-        min_s2 = -20
-    else:
-        min_s2 = -int(d2_1)
+    max_s2 = 70  if -int(d2_2) > 70  else -int(d2_2) - 5
+    min_s2 = -20 if -int(d2_1) < -20 else -int(d2_1)
     try:
         joint2.minDegree = min_s2
         joint2.maxDegree = max_s2
     except NameError:
         pass
-    print(f"Updated Stepper 2 range: min={min_s2}, max={max_s2}")
     return d2_1, d2_2
 
 
+# ─────────────────────────── ACCESS POINT ────────────────────────────────────
 def create_access_point():
     ap = network.WLAN(network.AP_IF)
     ap.active(True)
@@ -157,362 +196,319 @@ def create_access_point():
     print(f"Password: {AP_PASSWORD}")
     print(f"IP Address: {ap.ifconfig()[0]}")
     if DNS_AVAILABLE:
-        dns_domains = {"*": ap_ip}
-        if MicroDNSSrv.Create(dns_domains):
+        if MicroDNSSrv.Create({"*": ap_ip}):
             print("✅ DNS Server started")
         else:
             print("⚠️ DNS Server failed")
     return ap
 
 
-# Ultrasonic Sensors
+# ─────────────────────────── ULTRASONIC ──────────────────────────────────────
 us_right_trig = Pin(18, Pin.OUT)
 us_right_echo = Pin(19, Pin.IN)
-us_left_trig = Pin(20, Pin.OUT)
-us_left_echo = Pin(21, Pin.IN)
+us_left_trig  = Pin(20, Pin.OUT)
+us_left_echo  = Pin(21, Pin.IN)
 
-dist_right = -1.0
-dist_left = -1.0
 
 def get_distance(trig, echo):
-    trig.value(0)
-    time.sleep_us(2)
-    trig.value(1)
-    time.sleep_us(10)
+    trig.value(0); time.sleep_us(2)
+    trig.value(1); time.sleep_us(10)
     trig.value(0)
     pulse_time = time_pulse_us(echo, 1, 30000)
-    if pulse_time < 0:
-        return -1
-    return (pulse_time * 0.0343) / 2
+    return -1 if pulse_time < 0 else (pulse_time * 0.0343) / 2
 
-# Emergency Button
+
+# ─────────────────────────── EMERGENCY ───────────────────────────────────────
 emergency_btn = Pin(16, Pin.IN, Pin.PULL_UP)
+
+
+def stop_all_motors():
+    """Stop all stepper timers immediately. Safe to call from any context."""
+    for j in all_joints:
+        j.stepper.stop()
+
 
 def check_emergency():
     if emergency_btn.value() == 1:
-        print("🚨 EMERGENCY HOLD TRIGGERED! All motors stopped.")
-        while emergency_btn.value() == 1:
-            time.sleep_ms(50)
-            
-        print("✅ Emergency Hold Released")
-        return True
+        time.sleep_ms(20)                # debounce — ignore motor EMF glitches
+        if emergency_btn.value() == 1:   # still pressed — genuine emergency
+            stop_all_motors()            # ← IMMEDIATE stop BEFORE blocking wait
+            print("\U0001f6a8 EMERGENCY HOLD TRIGGERED! All motors stopped.")
+            while emergency_btn.value() == 1:
+                time.sleep_ms(50)
+            print("\u2705 Emergency Hold Released")
+            return True
     return False
 
-# Limit switches
+
+# ─────────────────────────── JOG CONTROLLER ─────────────────────────────────
+def jog_motion(j, d, tcp_sock):
+    """
+    Blocking jog loop.
+
+    Starts j.stepper.free_run() then loops until any stopping condition:
+      • limit_triggered  (set by limit-switch ISR — fires even inside a while loop)
+      • emergency button pressed
+      • soft degree limit (maxDegree / minDegree) reached
+      • "STOP" received on the non-blocking TCP socket (button released)
+      • TCP connection closed
+
+    The stepper library’s own Timer(-1) drives the step pulses, so motion
+    is perfectly smooth regardless of the while-loop’s iteration rate (2 ms).
+
+    After the motor stops, kinematic coupling limits are updated once.
+    """
+    global jog_axis, limit_triggered
+
+    # Pre-check: don’t start if already at the requested boundary
+    if d == 1 and j.currentDegree >= j.maxDegree:
+        return
+    if d == 0 and j.currentDegree <= j.minDegree:
+        return
+
+    jog_axis = all_joints.index(j) + 1  # track for post-stop kinematics
+
+    # ── Start continuous motion ────────────────────────────────────────────────
+    if not (limit_triggered or emergency_btn.value() == 1) : 
+        j.stepper.speed(j._jog_sps)
+        j.stepper.free_run(1 if d else -1)
+
+    last_send = time.ticks_ms()
+
+    # ── Guard loop ──────────────────────────────────────────────────────────
+    while True:
+
+        # Stopping condition 1: limit switch ISR
+        # Stopping condition 2: emergency button
+        # Stopping condition 3: soft degree limits
+        if limit_triggered or emergency_btn.value() == 1 or (d == 1 and j.currentDegree >= j.maxDegree) or (d == 0 and j.currentDegree <= j.minDegree):
+            j.stepper.stop()
+            break
+
+        # Stopping condition 4: "STOP" on non-blocking TCP socket (button released)
+        try:
+            data = tcp_sock.recv(64)
+            if data:
+                if b"STOP" in data:
+                    j.stepper.stop()
+                    break
+            else:
+                # Connection closed by client
+                j.stepper.stop()
+                break
+        except OSError as e:
+            if e.args[0] != 11:   # 11 = EAGAIN (no data yet) — normal, keep looping
+                j.stepper.stop()
+                break
+
+        # Send position state to frontend every 100 ms while jogging
+        now = time.ticks_ms()
+        if time.ticks_diff(now, last_send) > 100:
+            last_send = now
+            try:
+                state = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f}}}\n'.format(
+                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+                tcp_sock.send(state.encode())
+            except OSError:
+                break
+
+        time.sleep_us(100)   # 0.1 ms poll rate
+
+    # ── Post-stop: one-shot kinematic coupling update ─────────────────────────
+    if jog_axis == 2: solve_d3(j.currentDegree)
+    elif jog_axis == 3: solve_d2(j.currentDegree)
+
+
 limit_switch_1 = Pin(3, Pin.IN, Pin.PULL_UP)
 limit_switch_2 = Pin(2, Pin.IN, Pin.PULL_UP)
 limit_switch_3 = Pin(4, Pin.IN, Pin.PULL_UP)
 
-# --- LIMIT SWITCH CALIBRATION ANGLES ---
-# Edit these variables to change the exact angle (in degrees) 
-# where the limit switch physically triggers.
-# NOTE: If a joint's limit switch is on the negative side (e.g. minDegree),
-# use a negative number here (like -20.0 instead of 20.0).
-LIMIT_ANGLE_1 = 155.0
-LIMIT_ANGLE_2 = -25.0
-LIMIT_ANGLE_3 = 90.0
-
-# Global limit state
-limit_triggered = False
-limit_trigger_time = 0
-is_calibrating = False
-motion_interrupted = False
-calib_hit_1 = False
-calib_hit_2 = False
-calib_hit_3 = False
 
 def limit1_isr(pin):
-    global motion_interrupted, calib_hit_1, limit_triggered, limit_trigger_time
+    global calib_hit_1, limit_triggered
     if pin.value() == 0:
-        print(f"🛑 Limit 1 Triggered! Actual angle before reset: {joint1.currentDegree}°")
         if is_calibrating:
-            calib_hit_1 = True
+            # Guard: only register once — prevents bounce spam
+            if not calib_hit_1:
+                calib_hit_1 = True
         else:
             limit_triggered = True
-            limit_trigger_time = time.ticks_ms()
-            motion_interrupted = True
-            joint1.currentDegree = LIMIT_ANGLE_1
+            # Stop is deferred to main loop to avoid ISR heap allocation
+
 
 def limit2_isr(pin):
-    global motion_interrupted, calib_hit_2, limit_triggered, limit_trigger_time
+    global calib_hit_2, limit_triggered
     if pin.value() == 0:
-        print(f"🛑 Limit 2 Triggered! Actual angle before reset: {joint2.currentDegree}°")
         if is_calibrating:
-            calib_hit_2 = True
+            if not calib_hit_2:
+                calib_hit_2 = True
         else:
             limit_triggered = True
-            limit_trigger_time = time.ticks_ms()
-            motion_interrupted = True
-            joint2.currentDegree = LIMIT_ANGLE_2
+
 
 def limit3_isr(pin):
-    global motion_interrupted, calib_hit_3, limit_triggered, limit_trigger_time
+    global calib_hit_3, limit_triggered
     if pin.value() == 0:
-        print(f"🛑 Limit 3 Triggered! Actual angle before reset: {joint3.currentDegree}°")
         if is_calibrating:
-            calib_hit_3 = True
+            if not calib_hit_3:
+                calib_hit_3 = True
         else:
             limit_triggered = True
-            limit_trigger_time = time.ticks_ms()
-            motion_interrupted = True
-            joint3.currentDegree = LIMIT_ANGLE_3
-
-def step_motor(steps, dirPin, pulPin, direction, delay_step=delay):
-    """Step motor with interrupt checking. Stops immediately on trigger."""
-    global limit_triggered, limit_trigger_time, motion_interrupted
-    dirPin.value(0 if direction else 1)
-    for _ in range(steps):
-        if limit_triggered or check_emergency() or motion_interrupted:
-            print("⚠️ Movement blocked — interrupt limit or hold active.")
-            motion_interrupted = False
-            return
-        pulPin.value(1)
-        time.sleep_us(delay_step)
-        pulPin.value(0)
-        time.sleep_us(delay_step)
 
 
-def move_stepper(target_degree, joint: Joint):
-    """Move a joint to target_degree. Silently blocked if limit_triggered."""
+# ─────────────────────────── MOVE HELPER ─────────────────────────────────────
+def  move_stepper(target_deg, joint: Joint):
+    """
+    Non-blocking target move via library, polled here to appear blocking.
+    The Stepper timer runs underneath — HTTP/TCP sockets remain available
+    (though this function does yield every 5 ms).
+    """
     global limit_triggered
     if limit_triggered or check_emergency():
-        print("⚠️ Movement blocked — limit switch lockout or hold active.")
+        print("⚠️ Movement blocked — limit or emergency active.")
         return
 
-    target_degree = max(min(target_degree, joint.maxDegree), joint.minDegree)
-    degree_delta = target_degree - joint.currentDegree
-    pulse_delta = int(abs(degree_delta) * joint.degreeToPulseRatio)
+    target_deg = max(min(target_deg, joint.maxDegree), joint.minDegree)
+    joint.stepper.speed(joint._jog_sps)
+    joint.stepper.target_deg(target_deg)
 
-    if pulse_delta == 0:
-        return
-
-    direction = degree_delta > 0
-    step_motor(abs(pulse_delta), joint.dirPin, joint.pulsePin, direction)
-
-    # Only update position if we were not stopped by a limit
-    if not limit_triggered:
-        joint.currentDegree = target_degree
-    print(f"Joint moved to: {joint.currentDegree}°")
-
-
-
-
-
-def calibrate_steppers(joint1: Joint, joint2: Joint, joint3: Joint):
-    """
-    Non-blocking concurrent calibration of all 3 joints.
-    Each joint goes to its limit switch, updates to max angle, then goes to 0.
-    """
-    global is_calibrating, calib_hit_1, calib_hit_2, calib_hit_3
-    is_calibrating = True
-    calib_hit_1 = False
-    calib_hit_2 = False
-    calib_hit_3 = False
-
-    state1 = 0
-    state2 = 0
-    state3 = 0
-
-    steps_to_zero_1 = steps_to_zero_2 = steps_to_zero_3 = 0
-    steps_done_1 = steps_done_2 = steps_done_3 = 0
-
-    last_step_time_1 = last_step_time_2 = last_step_time_3 = time.ticks_us()
-    pulse_delay_1 = pulse_delay_2 = pulse_delay_3 = 533
-
-    print("🔧 Calibrating steppers concurrently at 75% speed...")
-
-    while not (state1 == 2 and state2 == 2 and state3 == 2):
-        if check_emergency():
-            print("🚨 EMERGENCY HOLD! Aborting calibration.")
-            is_calibrating = False
+    # Poll until stepper reaches target (_pos == _target means done)
+    while joint.stepper._pos != joint.stepper._target:
+        if limit_triggered or check_emergency():
+            joint.stepper.stop()
+            print(f"⚠️ Move interrupted at {joint.currentDegree:.1f}°")
             return
-        now = time.ticks_us()
+        time.sleep_ms(5)
 
-        # --- Joint 3 (First) ---
-        if state3 != 2:
-            if state3 == 0:
-                if calib_hit_3:
-                    joint3.currentDegree = LIMIT_ANGLE_3
-                    joint3.jointDir(0)
-                    steps_to_zero_3 = int(abs(LIMIT_ANGLE_3) * joint3.degreeToPulseRatio)
-                    steps_done_3 = 0
-                    state3 = 1
-                    print(f"Joint 3 reversing to 0. Steps required: {steps_to_zero_3}")
-                elif time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
-                    joint3.jointDir(1)
-                    joint3.jointPul(1)
-                    time.sleep_us(delay)
-                    joint3.jointPul(0)
-                    last_step_time_3 = now
-            elif state3 == 1:
-                if steps_done_3 < steps_to_zero_3:
-                    if time.ticks_diff(now, last_step_time_3) >= pulse_delay_3:
-                        joint3.jointPul(1)
-                        time.sleep_us(delay)
-                        joint3.jointPul(0)
-                        steps_done_3 += 1
-                        last_step_time_3 = now
-                else:
-                    joint3.currentDegree = 0
-                    state3 = 2
-                    print("Joint 3 calibration complete.")
+    print(f"Joint moved to: {joint.currentDegree:.1f}°")
 
-        # --- Joint 2 ---
-        if state2 != 2:
-            if state2 == 0:
-                if calib_hit_2:
-                    joint2.currentDegree = LIMIT_ANGLE_2
-                    joint2.jointDir(1)
-                    steps_to_zero_2 = int(abs(LIMIT_ANGLE_2) * joint2.degreeToPulseRatio)
-                    steps_done_2 = 0
-                    state2 = 1
-                    print(f"Joint 2 reversing to 0. Steps required: {steps_to_zero_2}")
-                elif time.ticks_diff(now, last_step_time_2) >= pulse_delay_2:
-                    joint2.jointDir(0)
-                    joint2.jointPul(1)
-                    time.sleep_us(delay)
-                    joint2.jointPul(0)
-                    last_step_time_2 = now
-            elif state2 == 1:
-                if steps_done_2 < steps_to_zero_2:
-                    if time.ticks_diff(now, last_step_time_2) >= pulse_delay_2:
-                        joint2.jointPul(1)
-                        time.sleep_us(delay)
-                        joint2.jointPul(0)
-                        steps_done_2 += 1
-                        last_step_time_2 = now
-                else:
-                    joint2.currentDegree = 0
-                    state2 = 2
-                    print("Joint 2 calibration complete.")
 
-        # --- Joint 1 ---
-        if state1 != 2:
-            if state1 == 0:
-                if calib_hit_1:
-                    joint1.currentDegree = LIMIT_ANGLE_1
-                    joint1.jointDir(0)
-                    steps_to_zero_1 = int(abs(LIMIT_ANGLE_1) * joint1.degreeToPulseRatio)
-                    steps_done_1 = 0
-                    state1 = 1
-                    print(f"Joint 1 reversing to 0. Steps required: {steps_to_zero_1}")
-                elif time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
-                    joint1.jointDir(1)
-                    joint1.jointPul(1)
-                    time.sleep_us(delay)
-                    joint1.jointPul(0)
-                    last_step_time_1 = now
-            elif state1 == 1:
-                if steps_done_1 < steps_to_zero_1:
-                    if time.ticks_diff(now, last_step_time_1) >= pulse_delay_1:
-                        joint1.jointPul(1)
-                        time.sleep_us(delay)
-                        joint1.jointPul(0)
-                        steps_done_1 += 1
-                        last_step_time_1 = now
-                else:
-                    joint1.currentDegree = 0
-                    state1 = 2
-                    print("Joint 1 calibration complete.")
+# ─────────────────────────── CALIBRATION ─────────────────────────────────────
+def _calib_abort(j1, j2, j3, reason=""):
+    """Stop all motors and re-enable limit IRQs after calibration abort."""
+    global is_calibrating
+    j1.stepper.stop(); j2.stepper.stop(); j3.stepper.stop()
+    is_calibrating = False
+    limit_switch_1.irq(trigger=Pin.IRQ_FALLING, handler=limit1_isr)
+    limit_switch_2.irq(trigger=Pin.IRQ_FALLING, handler=limit2_isr)
+    limit_switch_3.irq(trigger=Pin.IRQ_FALLING, handler=limit3_isr)
+    if reason:
+        print(reason)
+
+
+def calibrate_steppers(j1: Joint, j2: Joint, j3: Joint):
+    """
+    Per-joint independent calibration state machine.
+
+    Each joint cycles through three states independently:
+      0 = SEEKING  — free_run toward limit switch (polls pin every 2 ms)
+      1 = RETURNING — limit hit: reversed immediately via target_deg(0)
+      2 = DONE     — reached 0°, waiting for others
+
+    A joint does NOT wait for the others before reversing — it starts
+    heading back to 0° the instant its own limit pin goes LOW.
+    Calibration is complete when all three reach state 2.
+
+    Direct pin polling is used (not IRQ_FALLING) so that an already-pressed
+    limit switch is detected immediately on the first poll.
+    """
+    global is_calibrating
+    is_calibrating = True
+
+    # Disable limit IRQs — we poll directly for reliability
+    limit_switch_1.irq(handler=None)
+    limit_switch_2.irq(handler=None)
+    limit_switch_3.irq(handler=None)
+
+    # Per-joint state: 0=seeking, 1=returning to 0, 2=done
+    SEEKING, RETURNING, DONE = 0, 1, 2
+    state = [SEEKING, SEEKING, SEEKING]
+
+    joints   = [j1,              j2,              j3             ]
+    switches = [limit_switch_1,  limit_switch_2,  limit_switch_3 ]
+    angles   = [LIMIT_ANGLE_1,   LIMIT_ANGLE_2,   LIMIT_ANGLE_3  ]
+    dirs     = [1,               -1,              1              ]  # free_run direction
+    names    = ["J1",            "J2",            "J3"           ]
+
+    print("🔧 Calibrating steppers (independent homing)...")
+    print(f"  Limit pins: L1={limit_switch_1.value()} L2={limit_switch_2.value()} L3={limit_switch_3.value()}")
+
+    # Start all three seeking simultaneously
+    for j, d in zip(joints, dirs):
+        j.stepper.speed(j._calib_sps)
+        j.stepper.free_run(d)
+
+    while any(s != DONE for s in state):
+        if check_emergency():
+            _calib_abort(j1, j2, j3, "🚨 Emergency! Aborting calibration.")
+            return
+
+        for i in range(3):
+            if state[i] == SEEKING:
+                if switches[i].value() == 0:          # limit pin LOW → hit
+                    joints[i].stepper.stop()
+                    joints[i].currentDegree = angles[i]  # sync position
+                    state[i] = RETURNING
+                    print(f"✓ {names[i]} limit hit @ {angles[i]}°  → reversing to 0°")
+                    joints[i].stepper.speed(joints[i]._calib_sps)
+                    joints[i].stepper.target_deg(0)        # reverse immediately
+
+            elif state[i] == RETURNING:
+                if joints[i].stepper._pos == joints[i].stepper._target:
+                    state[i] = DONE
+                    print(f"✓ {names[i]} reached 0°")
+
+        time.sleep_ms(2)
 
     is_calibrating = False
-    print("✅ Calibration complete!")
+    limit_switch_1.irq(trigger=Pin.IRQ_FALLING, handler=limit1_isr)
+    limit_switch_2.irq(trigger=Pin.IRQ_FALLING, handler=limit2_isr)
+    limit_switch_3.irq(trigger=Pin.IRQ_FALLING, handler=limit3_isr)
+    print("✅ Calibration complete! All joints at 0°.")
 
 
-def send_chunked_response(cl, response, content_type="text/html"):
-    """Send HTTP response in small chunks without encoding full string at once."""
-    try:
-        cl.send(f'HTTP/1.0 200 OK\r\nContent-type: {content_type}\r\n\r\n'.encode())
-        chunk_size = 256
-        start = 0
-        total = len(response)
-        while start < total:
-            end = min(start + chunk_size, total)
-            cl.send(response[start:end].encode('utf-8'))
-            start = end
-            gc.collect()
-            time.sleep_ms(5)
-    except Exception as e:
-        print(f"Send error: {e}")
 
-
+# ─────────────────────────── PICK AND PLACE ──────────────────────────────────
 def pick_place():
-    """Execute pick and place sequence. Blocked if limit triggered."""
     global saved_movement_1, saved_movement_2
     if not saved_movement_1 or not saved_movement_2:
-        print("❌ Save Position 1 and Position 2 first")
-        return
-
+        print("❌ Save Position 1 and Position 2 first"); return
     if limit_triggered:
-        print("⚠️ Pick & Place blocked — limit switch lockout active.")
-        return
+        print("⚠️ Pick & Place blocked — limit active."); return
 
     print("▶️ Moving to Position 1")
     move_stepper(saved_movement_1[0], joint1)
-    solve_d3(saved_movement_1[1])
-    move_stepper(saved_movement_1[1], joint2)
-    solve_d2(saved_movement_1[2])
-    move_stepper(saved_movement_1[2], joint3)
-    time.sleep(1)
-    gripper.open()
-    time.sleep(1)
-    gripper.close()
-    time.sleep(1)
+    solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
+    solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
+    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
 
     if limit_triggered:
-        print("⚠️ Limit triggered during Position 1 move. Aborting.")
-        return
+        print("⚠️ Limit triggered. Aborting."); return
 
     print("▶️ Moving to Position 2")
     move_stepper(saved_movement_2[0], joint1)
-    solve_d3(saved_movement_2[1])
-    move_stepper(saved_movement_2[1], joint2)
-    solve_d2(saved_movement_2[2])
-    move_stepper(saved_movement_2[2], joint3)
-    time.sleep(1)
-    gripper.open()
-    time.sleep(1)
-    gripper.close()
-    time.sleep(1)
+    solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
+    solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
+    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
     print("✅ Pick and Place Complete")
 
 
 def pick_place_default():
-    """Execute default pick and place for continuous mode."""
     global limit_triggered
     if limit_triggered:
         return
-
-    print("▶️ Moving to Default Position 1")
     move_stepper(default_p1[0], joint1)
-    solve_d3(default_p1[1])
-    move_stepper(default_p1[1], joint2)
-    solve_d2(default_p1[2])
-    move_stepper(default_p1[2], joint3)
-    time.sleep(1)
-    gripper.open()
-    time.sleep(1)
-    gripper.close()
-    time.sleep(1)
-
-    if limit_triggered:
-        return
-
-    print("▶️ Moving to Default Position 2")
+    solve_d3(default_p1[1]); move_stepper(default_p1[1], joint2)
+    solve_d2(default_p1[2]); move_stepper(default_p1[2], joint3)
+    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
+    if limit_triggered: return
     move_stepper(default_p2[0], joint1)
-    solve_d3(default_p2[1])
-    move_stepper(default_p2[1], joint2)
-    solve_d2(default_p2[2])
-    move_stepper(default_p2[2], joint3)
-    time.sleep(1)
-    gripper.open()
-    time.sleep(1)
-    gripper.close()
-    time.sleep(1)
-    print("✅ Default Pick and Place Complete")
+    solve_d3(default_p2[1]); move_stepper(default_p2[1], joint2)
+    solve_d2(default_p2[2]); move_stepper(default_p2[2], joint3)
+    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
 
 
-# ─────────────────────────── MOTOR COMMAND PATHS ────────────────────────────
+# ─────────────────────────── HTTP HELPERS ────────────────────────────────────
 MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous']
 
 
@@ -520,32 +516,69 @@ def is_motor_path(path):
     return any(path.startswith(p) for p in MOTOR_PATHS)
 
 
-
-# ──────────────────────────────── MAIN ──────────────────────────────────────
+# ──────────────────────────────── MAIN ───────────────────────────────────────
 if __name__ == "__main__":
     ap = create_access_point()
 
     gripper = Gripper()
 
-    joint1 = Joint(dir=9,  pulse=11, minDegree=-175, maxDegree=150, maxPulse=3875, degreeToPulseRatio=3875/175)
-    joint2 = Joint(dir=7,  pulse=13, minDegree=-20,  maxDegree=70,  maxPulse=3875, degreeToPulseRatio=2625/90)
-    joint3 = Joint(dir=14, pulse=15, minDegree=-85,  maxDegree=85,  maxPulse=3875, degreeToPulseRatio=2500/90)
+    # ── Joint initialization ─────────────────────────────────────────────────
+    # steps_per_rev = degreeToPulseRatio × 360
+    # invert_dir=True: our hardware uses dirPin LOW for positive direction,
+    #   which is opposite to the library's default (dirPin HIGH = positive).
+    # Adjust invert_dir per joint if motor runs the wrong way after testing.
 
-    # Attach interrupt handlers to limits
+    joint1 = Joint(step_pin=11, dir_pin=9,
+                   min_deg=-175, max_deg=150,
+                   steps_per_rev=7971,          # (3875/175) × 360
+                   jog_sps=1000,                # ≈ 45°/s
+                   calib_sps=750,               # ≈ 34°/s (75% of jog)
+                   timer_id=-1, invert_dir=True)
+
+    joint2 = Joint(step_pin=13, dir_pin=7,
+                   min_deg=-20, max_deg=70,
+                   steps_per_rev=10500,          # (2625/90) × 360
+                   jog_sps=875,                  # ≈ 30°/s
+                   calib_sps=650,                # ≈ 22°/s (75% of jog)
+                   timer_id=-1, invert_dir=True)
+
+    joint3 = Joint(step_pin=15, dir_pin=14,
+                   min_deg=-85, max_deg=85,
+                   steps_per_rev=10000,          # (2500/90) × 360
+                   jog_sps=1111,                 # ≈ 40°/s
+                   calib_sps=833,                # ≈ 30°/s (75% of jog)
+                   timer_id=-1, invert_dir=True)
+
+    # ── Attach limit switch interrupts ───────────────────────────────────────
     limit_switch_1.irq(trigger=Pin.IRQ_FALLING, handler=limit1_isr)
     limit_switch_2.irq(trigger=Pin.IRQ_FALLING, handler=limit2_isr)
     limit_switch_3.irq(trigger=Pin.IRQ_FALLING, handler=limit3_isr)
 
+    # ── Populate motor list so check_emergency() / stop_all_motors() work ────
+    all_joints.extend([joint1, joint2, joint3])
+
+
+    # ── HTTP server (port 80) ────────────────────────────────────────────────
     addr = socket.getaddrinfo('0.0.0.0', 80)[0][-1]
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    s.bind(addr)
-    s.listen(1)
-    s.setblocking(False)   # ← KEY: non-blocking so recovery loop runs every tick
+    s.bind(addr); s.listen(1); s.setblocking(False)
     print(f"Server running on http://{ap.ifconfig()[0]}:80")
 
+    # ── TCP Bridge (port 81) for real-time jog control ───────────────────────
+    addr2 = socket.getaddrinfo('0.0.0.0', 81)[0][-1]
+    s2 = socket.socket()
+    s2.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    s2.bind(addr2); s2.listen(1); s2.setblocking(False)
+    print("TCP Bridge listening on port 81")
+
+    # ── Jog TCP mailbox state ─────────────────────────────────────────────────
+    tcp_client    = None
+    last_tcp_send = 0
+
+    # ─────────────────────────── MAIN LOOP ───────────────────────────────────
     while True:
-        # ── Handle incoming HTTP request (non-blocking) ──────────────────────
+        # ── Handle incoming HTTP request (non-blocking) ───────────────────────
         cl = None
         try:
             cl, addr = s.accept()
@@ -555,91 +588,67 @@ if __name__ == "__main__":
             print("Request:", path)
 
             if is_motor_path(path):
-                global limit_triggered
                 limit_triggered = False
 
-            # ── Serve image ─────────────────────────────────────────────────
+            # ── Serve image ──────────────────────────────────────────────────
             if path.startswith('/arnobot.jpeg'):
                 try:
                     with open('arnobot.jpeg', 'rb') as f:
-                        f.seek(0, 2)
-                        file_size = f.tell()
-                        f.seek(0)
-                        header = f'HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'
-                        cl.send(header.encode())
-                        bytes_sent = 0
+                        f.seek(0, 2); file_size = f.tell(); f.seek(0)
+                        cl.send(f'HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'.encode())
                         while True:
                             chunk = f.read(1024)
-                            if not chunk:
-                                break
-                            cl.send(chunk)
-                            bytes_sent += len(chunk)
-                            gc.collect()
-                        print(f'✓ Image served: {bytes_sent}/{file_size} bytes')
+                            if not chunk: break
+                            cl.send(chunk); gc.collect()
                 except Exception as e:
-                    print(f'Image error: {e}')
                     cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
-
-            # ── Stepper control ─────────────────────────────────────────────
-            elif path.startswith('/stepper'):
-                parts = path.split('?')[1].split('&')
-                num = int(parts[0].split('=')[1])
-                angle = int(parts[1].split('=')[1])
-                if num == 1:
-                    move_stepper(angle, joint1)
-                elif num == 2:
-                    solve_d3(angle)
-                    move_stepper(angle, joint2)
-                elif num == 3:
-                    solve_d2(angle)
-                    move_stepper(angle, joint3)
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nOK')
-
-            elif path.startswith('/get_range3'):
-                response = '{{"min":{},"max":{}}}'.format(min_s3, max_s3)
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-                cl.send(response.encode())
-
-            elif path.startswith('/get_range2'):
-                response = '{{"min":{},"max":{}}}'.format(min_s2, max_s2)
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-                cl.send(response.encode())
-
-            elif path.startswith('/status'):
-                response = '{{"s1":{}, "s2":{}, "s3":{}, "dist_right":{:.1f}, "dist_left":{:.1f}, "emergency":{}}}'.format(
-                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree, dist_right, dist_left, "true" if emergency_btn.value() == 1 else "false")
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-                cl.send(response.encode())
 
             elif path.startswith('/arnobot.png'):
                 try:
                     with open('arnobot.png', 'rb') as f:
-                        f.seek(0, 2)
-                        file_size = f.tell()
-                        f.seek(0)
-                        header = f'HTTP/1.0 200 OK\r\nContent-Type: image/png\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'
-                        cl.send(header.encode())
-                        bytes_sent = 0
+                        f.seek(0, 2); file_size = f.tell(); f.seek(0)
+                        cl.send(f'HTTP/1.0 200 OK\r\nContent-Type: image/png\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'.encode())
                         while True:
                             chunk = f.read(1024)
-                            if not chunk:
-                                break
-                            cl.send(chunk)
-                            bytes_sent += len(chunk)
-                            gc.collect()
-                        print(f'✓ Logo served: {bytes_sent}/{file_size} bytes')
+                            if not chunk: break
+                            cl.send(chunk); gc.collect()
                 except Exception as e:
-                    print(f'Logo error: {e}')
                     cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
+
+            # ── Stepper control ──────────────────────────────────────────────
+            elif path.startswith('/stepper'):
+                parts = path.split('?')[1].split('&')
+                num   = int(parts[0].split('=')[1])
+                angle = float(parts[1].split('=')[1])
+                if num == 1:
+                    move_stepper(angle, joint1)
+                elif num == 2:
+                    solve_d3(angle); move_stepper(angle, joint2)
+                elif num == 3:
+                    solve_d2(angle); move_stepper(angle, joint3)
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nOK')
+
+            elif path.startswith('/get_range3'):
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+                cl.send('{{"min":{},"max":{}}}'.format(min_s3, max_s3).encode())
+
+            elif path.startswith('/get_range2'):
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+                cl.send('{{"min":{},"max":{}}}'.format(min_s2, max_s2).encode())
+
+            elif path.startswith('/status'):
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+                cl.send('{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"dist_right":{:.1f},"dist_left":{:.1f},"emergency":{}}}'.format(
+                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
+                    dist_right, dist_left,
+                    "true" if emergency_btn.value() == 1 else "false").encode())
 
             elif path.startswith('/gripper'):
                 action = path.split('=')[1]
                 if action == 'open':
-                    gripper.open()
-                    gripper_state = 'open'
+                    gripper.open(); gripper_state = 'open'
                 elif action == 'close':
-                    gripper.close()
-                    gripper_state = 'closed'
+                    gripper.close(); gripper_state = 'closed'
                 cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
 
             elif path.startswith('/calibrate'):
@@ -660,31 +669,21 @@ if __name__ == "__main__":
 
             elif path.startswith('/run1'):
                 if saved_movement_1 and not limit_triggered:
-                    print("Running to Position 1...")
-                    move_stepper(0, joint1)
-                    move_stepper(0, joint2)
-                    move_stepper(0, joint3)
+                    move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
                     time.sleep(1)
                     move_stepper(saved_movement_1[0], joint1)
-                    solve_d3(saved_movement_1[1])
-                    move_stepper(saved_movement_1[1], joint2)
-                    solve_d2(saved_movement_1[2])
-                    move_stepper(saved_movement_1[2], joint3)
+                    solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
+                    solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
                     print("✅ Position 1 reached")
                 cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
 
             elif path.startswith('/run2'):
                 if saved_movement_2 and not limit_triggered:
-                    print("Running to Position 2...")
-                    move_stepper(0, joint1)
-                    move_stepper(0, joint2)
-                    move_stepper(0, joint3)
+                    move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
                     time.sleep(1)
                     move_stepper(saved_movement_2[0], joint1)
-                    solve_d3(saved_movement_2[1])
-                    move_stepper(saved_movement_2[1], joint2)
-                    solve_d2(saved_movement_2[2])
-                    move_stepper(saved_movement_2[2], joint3)
+                    solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
+                    solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
                     print("✅ Position 2 reached")
                 cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
 
@@ -704,34 +703,76 @@ if __name__ == "__main__":
                 cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
 
             else:
-                # Main page
-                cl.send(b'HTTP/1.0 404 Not Found\\r\\n\\r\\nAPI Only')
+                cl.send(b'HTTP/1.0 404 Not Found\r\n\r\nAPI Only')
 
         except OSError as e:
-            # errno 11 = EAGAIN: no connection available on non-blocking socket — totally normal
             if e.args[0] != 11:
                 print("Socket error:", e)
         except Exception as e:
             print("Request handling error:", e)
         finally:
             if cl:
-                try:
-                    cl.close()
-                except:
-                    pass
+                try: cl.close()
+                except: pass
 
-        # ── Continuous run (only when not in limit lockout) ──────────────────
+        # ── TCP Bridge for Real-time Jog Control (Port 81) ───────────────────
+        try:
+            cl2, addr2 = s2.accept()
+            cl2.setblocking(False)
+            if tcp_client:
+                try: tcp_client.close()
+                except: pass
+            tcp_client = cl2
+        except OSError as e:
+            if e.args[0] != 11: print("TCP accept error:", e)
+
+        if tcp_client:
+            try:
+                data = tcp_client.recv(64)
+                if data:
+                    for cmd in data.decode().strip().split('\n'):
+                        cmd = cmd.strip()
+                        if cmd.startswith("START_"):
+                            parts = cmd.split("_")
+                            if len(parts) == 3:
+                                try:
+                                    ax = int(parts[1])
+                                    d  = int(parts[2])
+                                    if 1 <= ax <= 3:
+                                        limit_triggered = False
+                                        # jog_motion() blocks until motor stops
+                                        jog_motion(all_joints[ax - 1], d, tcp_client)
+                                except ValueError:
+                                    pass
+                        # STOP is handled inside jog_motion() via tcp_sock.recv()
+                else:
+                    tcp_client.close(); tcp_client = None
+            except OSError as e:
+                if e.args[0] != 11:
+                    tcp_client.close(); tcp_client = None
+
+        # ── Send state to TCP client (every 100 ms) ───────────────────────────
+        now = time.ticks_ms()
+        if tcp_client and time.ticks_diff(now, last_tcp_send) > 100:
+            last_tcp_send = now
+            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f}}}\n'.format(
+                joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+            try:
+                tcp_client.send(state_str.encode())
+            except OSError:
+                tcp_client.close(); tcp_client = None
+
+        # ── Continuous run ────────────────────────────────────────────────────
         if continuous_run and not limit_triggered and emergency_btn.value() == 0:
             pick_place_default()
             time.sleep(2)
-            
-        # ── Ultrasonic Distance Measurement ──────────────────────────────────────
-        dist_right = get_distance(us_right_trig, us_right_echo)
-        dist_left = get_distance(us_left_trig, us_left_echo)
 
-        # ── Emergency blocking loop check ───────────────────────────────────
+        # ── Ultrasonic ────────────────────────────────────────────────────────
+        dist_right = get_distance(us_right_trig, us_right_echo)
+        dist_left  = get_distance(us_left_trig,  us_left_echo)
+
+        # ── Emergency check ───────────────────────────────────────────────────
         check_emergency()
 
         gc.collect()
-        time.sleep_ms(5)  # Yield — keeps loop ~200Hz without burning CPU
-
+        time.sleep_ms(5)
