@@ -16,9 +16,14 @@ function ControlPanel({ state, setState }) {
         const json = JSON.parse(dataStr);
         setState(prev => ({
           ...prev,
-          s1: json.s1 !== undefined ? json.s1 : prev.s1,
-          s2: json.s2 !== undefined ? json.s2 : prev.s2,
-          s3: json.s3 !== undefined ? json.s3 : prev.s3,
+          s1:     json.s1  !== undefined ? json.s1  : prev.s1,
+          s2:     json.s2  !== undefined ? json.s2  : prev.s2,
+          s3:     json.s3  !== undefined ? json.s3  : prev.s3,
+          // Range fields embedded in TCP state (n2/x2/n3/x3)
+          min_s2: json.n2  !== undefined ? json.n2  : prev.min_s2,
+          max_s2: json.x2  !== undefined ? json.x2  : prev.max_s2,
+          min_s3: json.n3  !== undefined ? json.n3  : prev.min_s3,
+          max_s3: json.x3  !== undefined ? json.x3  : prev.max_s3,
         }));
       } catch (e) { }
     });
@@ -89,33 +94,10 @@ function ControlPanel({ state, setState }) {
     setState(prev => ({ ...prev, [`s${axis}`]: Math.round(val) }));
 
     try {
-      const response = await axios.get(`${API_BASE}/stepper?motor=${axis}&angle=${val}`, { timeout: 5000 });
-
-      if (axis === 2 || axis === 3) {
-        updatePositionsAndRanges();
-      }
+      await axios.get(`${API_BASE}/stepper?motor=${axis}&angle=${val}`, { timeout: 5000 });
+      // Ranges update automatically via TCP robot_state broadcast (n2/x2/n3/x3)
     } catch (error) {
       console.error('Error sending angle', error);
-    }
-  };
-
-  const updatePositionsAndRanges = async () => {
-    try {
-      const stat = await axios.get(`${API_BASE}/status`);
-      const r2 = await axios.get(`${API_BASE}/get_range2`);
-      const r3 = await axios.get(`${API_BASE}/get_range3`);
-      setState(prev => ({
-        ...prev,
-        s1: Math.round(stat.data.s1),
-        s2: Math.round(stat.data.s2),
-        s3: Math.round(stat.data.s3),
-        min_s2: Math.round(r2.data.min),
-        max_s2: Math.round(r2.data.max),
-        min_s3: Math.round(r3.data.min),
-        max_s3: Math.round(r3.data.max)
-      }));
-    } catch(err) {
-      console.error('Error syncing data', err);
     }
   };
 

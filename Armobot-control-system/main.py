@@ -43,11 +43,11 @@ class Gripper:
 
     def open(self):
         self.set_angle(0)
-        utime.sleep_ms(500)
+        utime.sleep_ms(300)
 
     def close(self):
         self.set_angle(85)
-        utime.sleep_ms(500)
+        utime.sleep_ms(300)
 
 
 # ─────────────────────────── JOINT ───────────────────────────────────────────
@@ -120,14 +120,14 @@ saved_movement_2 = []
 default_p1 = [-50.0, 50.0, -20.0]
 default_p2 = [ 40.0, 30.0, -30.0]
 
-# Dynamic kinematic limits (updated by solve_d2 / solve_d3)
-min_s2 = -20
-max_s2 = 70
-min_s3 = -85
-max_s3 = 85
-
 dist_right = -1.0
 dist_left  = -1.0
+
+# Dynamic kinematic limits (updated by solve_d2 / solve_d3)
+min_s2 = -20
+max_s2 =  70
+min_s3 = -85
+max_s3 =  85
 
 # ─────────────────────────── JOG CONTROLLER STATE ───────────────────────────
 jog_axis = 0   # index of last jogged joint (1/2/3); used for post-stop kinematics
@@ -137,49 +137,61 @@ l1 = 18
 l2 = 21
 l3 = 35
 
+# Absolute (hardware) joint limits — used to clamp kinematic solutions
+J2_ABS_MIN, J2_ABS_MAX = -20,  90
+J3_ABS_MIN, J3_ABS_MAX = -85,  85
+
 
 def solve_d3(d2):
-    """Update joint3's dynamic limits based on joint2 position."""
-    global max_s3, min_s3
+    """Update joint3's dynamic limits based on current joint2 angle."""
+    global min_s3, max_s3
     d2_rad = math.radians(d2)
     value  = (l1 + l2 * math.cos(d2_rad)) / l3
-    if value > 1 or value < -1:
-        return None
+    if value > 1 or value < -1:      # asin domain check
+        # No kinematic constraint at this configuration — restore full hardware range
+        min_s3, max_s3 = J3_ABS_MIN, J3_ABS_MAX
+        try: joint3.minDegree = J3_ABS_MIN; joint3.maxDegree = J3_ABS_MAX
+        except NameError: pass
+        return
     asin_val = math.degrees(math.asin(value))
-    d3_1 = d2 - asin_val
-    d3_2 = d2 - (180 - asin_val)
-    max_s3 = int(-d3_2)
-    min_s3 = int(d3_1)
+    d3_a = d2 - asin_val              # solution A
+    d3_b = d2 - (180.0 - asin_val)   # solution B
+    # Clamp to hardware absolute limits
+    min_s3 = max(round(d3_a),  J3_ABS_MIN)
+    max_s3 = min(round(-d3_b), J3_ABS_MAX)
     try:
         joint3.minDegree = min_s3
         joint3.maxDegree = max_s3
     except NameError:
         pass
-    return -d3_1, -d3_2
 
 
 def solve_d2(d3_degrees):
-    """Update joint2's dynamic limits based on joint3 position."""
-    global max_s2, min_s2
-    d3  = math.radians(d3_degrees)
-    a   = l2 + l3 * math.sin(d3)
-    b   = l3 * math.cos(d3)
-    c   = -l1
-    R   = math.sqrt(a * a + b * b)
-    if abs(c) > R:
-        return None
+    """Update joint2's dynamic limits based on current joint3 angle."""
+    global min_s2, max_s2
+    d3 = math.radians(d3_degrees)
+    a  = l2 + l3 * math.sin(d3)
+    b  = l3 * math.cos(d3)
+    c  = -l1
+    R  = math.sqrt(a*a + b*b)
+    if abs(c) > R:                   # acos domain check
+        # No kinematic constraint at this configuration — restore full hardware range
+        min_s2, max_s2 = J2_ABS_MIN, J2_ABS_MAX
+        try: joint2.minDegree = J2_ABS_MIN; joint2.maxDegree = J2_ABS_MAX
+        except NameError: pass
+        return
     phi  = math.atan2(b, a)
     psi  = math.acos(c / R)
-    d2_1 = math.degrees(phi + psi)
-    d2_2 = math.degrees(phi - psi)
-    max_s2 = 70  if -int(d2_2) > 70  else -int(d2_2) - 5
-    min_s2 = -20 if -int(d2_1) < -20 else -int(d2_1)
+    d2_a = math.degrees(phi + psi)   # solution A
+    d2_b = math.degrees(phi - psi)   # solution B
+    # Clamp to hardware absolute limits
+    min_s2 = max(round(-d2_a), J2_ABS_MIN)
+    max_s2 = min(round(-d2_b), J2_ABS_MAX)
     try:
         joint2.minDegree = min_s2
         joint2.maxDegree = max_s2
     except NameError:
         pass
-    return d2_1, d2_2
 
 
 # ─────────────────────────── ACCESS POINT ────────────────────────────────────
@@ -301,18 +313,19 @@ def jog_motion(j, d, tcp_sock):
                 j.stepper.stop()
                 break
 
-        # Send position state to frontend every 100 ms while jogging
+        # Send position + range state to frontend every 100 ms while jogging
         now = time.ticks_ms()
         if time.ticks_diff(now, last_send) > 100:
             last_send = now
             try:
-                state = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f}}}\n'.format(
-                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+                state = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{}}}\n'.format(
+                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
+                    min_s2, max_s2, min_s3, max_s3)
                 tcp_sock.send(state.encode())
             except OSError:
                 break
 
-        time.sleep_us(100)   # 0.1 ms poll rate
+        #time.sleep_ms(1)   # 1ms poll — keeps loop tight, avoids busy-spinning
 
     # ── Post-stop: one-shot kinematic coupling update ─────────────────────────
     if jog_axis == 2: solve_d3(j.currentDegree)
@@ -378,7 +391,7 @@ def  move_stepper(target_deg, joint: Joint):
             joint.stepper.stop()
             print(f"⚠️ Move interrupted at {joint.currentDegree:.1f}°")
             return
-        time.sleep_ms(5)
+        time.sleep_ms(1)
 
     print(f"Joint moved to: {joint.currentDegree:.1f}°")
 
@@ -458,12 +471,19 @@ def calibrate_steppers(j1: Joint, j2: Joint, j3: Joint):
                     state[i] = DONE
                     print(f"✓ {names[i]} reached 0°")
 
-        time.sleep_ms(2)
+        time.sleep_ms(1)
 
     is_calibrating = False
     limit_switch_1.irq(trigger=Pin.IRQ_FALLING, handler=limit1_isr)
     limit_switch_2.irq(trigger=Pin.IRQ_FALLING, handler=limit2_isr)
     limit_switch_3.irq(trigger=Pin.IRQ_FALLING, handler=limit3_isr)
+    # All joints are now at 0°. Reset dynamic kinematic limits to hardware absolutes.
+    # solve_d3(0) fails domain check (value > 1), so we must reset explicitly here.
+    global min_s2, max_s2, min_s3, max_s3
+    min_s2, max_s2 = J2_ABS_MIN, J2_ABS_MAX
+    min_s3, max_s3 = J3_ABS_MIN, J3_ABS_MAX
+    j2.minDegree = J2_ABS_MIN;  j2.maxDegree = J2_ABS_MAX
+    j3.minDegree = J3_ABS_MIN;  j3.maxDegree = J3_ABS_MAX
     print("✅ Calibration complete! All joints at 0°.")
 
 
@@ -480,7 +500,7 @@ def pick_place():
     move_stepper(saved_movement_1[0], joint1)
     solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
     solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
-    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
+    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
 
     if limit_triggered:
         print("⚠️ Limit triggered. Aborting."); return
@@ -489,7 +509,7 @@ def pick_place():
     move_stepper(saved_movement_2[0], joint1)
     solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
     solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
-    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
+    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
     print("✅ Pick and Place Complete")
 
 
@@ -500,12 +520,12 @@ def pick_place_default():
     move_stepper(default_p1[0], joint1)
     solve_d3(default_p1[1]); move_stepper(default_p1[1], joint2)
     solve_d2(default_p1[2]); move_stepper(default_p1[2], joint3)
-    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
+    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
     if limit_triggered: return
     move_stepper(default_p2[0], joint1)
     solve_d3(default_p2[1]); move_stepper(default_p2[1], joint2)
     solve_d2(default_p2[2]); move_stepper(default_p2[2], joint3)
-    time.sleep(1); gripper.open(); time.sleep(1); gripper.close(); time.sleep(1)
+    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
 
 
 # ─────────────────────────── HTTP HELPERS ────────────────────────────────────
@@ -531,22 +551,22 @@ if __name__ == "__main__":
     joint1 = Joint(step_pin=11, dir_pin=9,
                    min_deg=-175, max_deg=150,
                    steps_per_rev=7971,          # (3875/175) × 360
-                   jog_sps=1000,                # ≈ 45°/s
-                   calib_sps=750,               # ≈ 34°/s (75% of jog)
+                   jog_sps=600,                # ≈ 27°/s
+                   calib_sps=1000,               # ≈ 45°/s
                    timer_id=-1, invert_dir=True)
 
     joint2 = Joint(step_pin=13, dir_pin=7,
                    min_deg=-20, max_deg=70,
                    steps_per_rev=10500,          # (2625/90) × 360
-                   jog_sps=875,                  # ≈ 30°/s
-                   calib_sps=650,                # ≈ 22°/s (75% of jog)
+                   jog_sps=800,                  # ≈ 27.4°/s
+                   calib_sps=800,                # ≈ 27.4°/s
                    timer_id=-1, invert_dir=True)
 
     joint3 = Joint(step_pin=15, dir_pin=14,
                    min_deg=-85, max_deg=85,
                    steps_per_rev=10000,          # (2500/90) × 360
                    jog_sps=1111,                 # ≈ 40°/s
-                   calib_sps=833,                # ≈ 30°/s (75% of jog)
+                   calib_sps=1111,                # ≈ 40°/s
                    timer_id=-1, invert_dir=True)
 
     # ── Attach limit switch interrupts ───────────────────────────────────────
@@ -670,7 +690,6 @@ if __name__ == "__main__":
             elif path.startswith('/run1'):
                 if saved_movement_1 and not limit_triggered:
                     move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
-                    time.sleep(1)
                     move_stepper(saved_movement_1[0], joint1)
                     solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
                     solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
@@ -680,7 +699,6 @@ if __name__ == "__main__":
             elif path.startswith('/run2'):
                 if saved_movement_2 and not limit_triggered:
                     move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
-                    time.sleep(1)
                     move_stepper(saved_movement_2[0], joint1)
                     solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
                     solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
@@ -751,12 +769,13 @@ if __name__ == "__main__":
                 if e.args[0] != 11:
                     tcp_client.close(); tcp_client = None
 
-        # ── Send state to TCP client (every 100 ms) ───────────────────────────
+        # ── Send position + range state to TCP client (every 100 ms) ──────────────
         now = time.ticks_ms()
         if tcp_client and time.ticks_diff(now, last_tcp_send) > 100:
             last_tcp_send = now
-            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f}}}\n'.format(
-                joint1.currentDegree, joint2.currentDegree, joint3.currentDegree)
+            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{}}}\n'.format(
+                joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
+                min_s2, max_s2, min_s3, max_s3)
             try:
                 tcp_client.send(state_str.encode())
             except OSError:
@@ -775,4 +794,6 @@ if __name__ == "__main__":
         check_emergency()
 
         gc.collect()
-        time.sleep_ms(5)
+        # No idle sleep — all sockets are non-blocking so loop is naturally fast.
+        # A sleep here adds direct latency to every HTTP request cycle.
+
