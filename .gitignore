@@ -65,4 +65,4 @@ Thumbs.db
 /references/
 /old_versions/
 *.md
-*.gitignore
+!README.md
