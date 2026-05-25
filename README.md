@@ -135,6 +135,10 @@ Armobot-control-system/
 | **Ultrasonic Left** — Echo | GP21 |
 | **Emergency Stop Button** | GP16 |
 
+### Raspberry Pi Pico W Pinout Reference
+
+![Pico W Pinout Diagram](Armobot-control-system/Raspberry%20Pi%20Pico%20pinout%20diagram.svg)
+
 ### Circuit Connection Diagram
 
 ![Circuit Connection Diagram](Armobot-control-system/Raspberry%20Pi%20Pico%20-%20Circuit%20Connection%20Diagram.svg)
