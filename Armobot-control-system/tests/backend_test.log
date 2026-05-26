@@ -1,0 +1,159 @@
+Backend server running on http://localhost:3099
+Connected to SQLite database.
+Connected to Pico W TCP Bridge at 127.0.0.1:8181
+Frontend client connected via WebSocket: 2su7huKd8XNBrl0QAAAB
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: 2su7huKd8XNBrl0QAAAB
+Frontend client connected via WebSocket: dIZrK_as8FSgMzu6AAAD
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: dIZrK_as8FSgMzu6AAAD
+Frontend client connected via WebSocket: QrbpEmmK2sCh3FgGAAAF
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: QrbpEmmK2sCh3FgGAAAF
+Frontend client connected via WebSocket: Vtm6hht3jQYDzwOmAAAH
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: Vtm6hht3jQYDzwOmAAAH
+Frontend client connected via WebSocket: JQTyMaD15eIkA7baAAAJ
+[PnP] Stop requested.
+Client disconnected: JQTyMaD15eIkA7baAAAJ
+Frontend client connected via WebSocket: sgkeNoXF6edcFSP0AAAL
+[PnP] Starting sequence with 3 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Sending position 3 (idx 2), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: sgkeNoXF6edcFSP0AAAL
+Frontend client connected via WebSocket: 36d81lAK0Mgyi6rHAAAN
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: 36d81lAK0Mgyi6rHAAAN
+Frontend client connected via WebSocket: 4zqwrdj_KU7uLluOAAAP
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: 4zqwrdj_KU7uLluOAAAP
+Frontend client connected via WebSocket: 7Ml6Qy0eLx439MbuAAAR
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: 7Ml6Qy0eLx439MbuAAAR
+Frontend client connected via WebSocket: Itash9AlHAj6T_a-AAAT
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Paused.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: Itash9AlHAj6T_a-AAAT
+Frontend client connected via WebSocket: RmzjfBesJ0IxTqu9AAAV
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Paused.
+[PnP] Resumed.
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: RmzjfBesJ0IxTqu9AAAV
+Frontend client connected via WebSocket: ccFgD4_izdCF0o3uAAAX
+[PnP] Starting sequence with 3 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Paused.
+[PnP] Resumed.
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: ccFgD4_izdCF0o3uAAAX
+[PnP] Timeout on position 1
+Frontend client connected via WebSocket: YthNaG7yi38fg3kqAAAZ
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Paused.
+[PnP] Timeout on position 2
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: YthNaG7yi38fg3kqAAAZ
+Frontend client connected via WebSocket: eV5KduMy_QeMAAQOAAAb
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Timeout on position 1
+[PnP] Stop requested.
+Client disconnected: eV5KduMy_QeMAAQOAAAb
+Frontend client connected via WebSocket: 0eKpCzocqKLQ3XydAAAd
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Timeout on position 1
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: 0eKpCzocqKLQ3XydAAAd
+Frontend client connected via WebSocket: jVB-njqFHwUzkTfbAAAf
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Error on position 1: error:test_error
+[PnP] Stop requested.
+Client disconnected: jVB-njqFHwUzkTfbAAAf
+Frontend client connected via WebSocket: IMQMMTbfDoCZKHSkAAAh
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Error on position 1: error:test_error
+[PnP] Stop requested.
+Client disconnected: IMQMMTbfDoCZKHSkAAAh
+Frontend client connected via WebSocket: CtDHEkfxpkRnZCYfAAAj
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 2 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: CtDHEkfxpkRnZCYfAAAj
+Frontend client connected via WebSocket: MASfWkCqpceB0KC7AAAl
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: MASfWkCqpceB0KC7AAAl
+Frontend client connected via WebSocket: bUQX2CLfWYB4MfUmAAAn
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 1 complete. Restarting sequence.
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Sending position 2 (idx 1), timeout 2800ms
+[PnP] Loop 2 complete. Restarting sequence.
+[PnP] Stop requested.
+[PnP] Starting sequence with 2 positions (looping until stop).
+[PnP] Sending position 1 (idx 0), timeout 2800ms
+[PnP] Stop requested.
+[PnP] Stop requested.
+Client disconnected: bUQX2CLfWYB4MfUmAAAn

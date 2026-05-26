@@ -60,12 +60,17 @@ class Joint:
       J2: (2625/90)  × 360 ≈ 10500
       J3: (2500/90)  × 360 ≈ 10000
 
+    Hardware joint ranges:
+      J1: -175° to +150°
+      J2:  -20° to  +70°
+      J3:  -75° to  +85°  (min updated from -85° after mechanical testing)
+
     invert_dir=True because the hardware wires positive direction to dirPin LOW (0),
     while the Stepper library defaults to dirPin HIGH for positive steps.
     Adjust per joint if direction is wrong after testing.
 
-    jog_sps  — steps/sec during jogging  (≈ 45°/s for J1, 30°/s for J2, 40°/s for J3)
-    calib_sps — steps/sec during calibration (75% of jog_sps)
+    jog_sps  — steps/sec during jogging  (≈ 27°/s for J1, 18.9°/s for J2, 40°/s for J3)
+    calib_sps — steps/sec during calibration (same as jog_sps by default)
     timer_id — always use -1 on Pico W (RP2040 only supports software timers via Timer(-1))
     """
     def __init__(self, step_pin, dir_pin, min_deg, max_deg,
@@ -126,20 +131,20 @@ dist_left  = -1.0
 # Dynamic kinematic limits (updated by solve_d2 / solve_d3)
 min_s2 = -20
 max_s2 =  70
-min_s3 = -85
+min_s3 = -75   # matches J3_ABS_MIN
 max_s3 =  85
 
 # ─────────────────────────── JOG CONTROLLER STATE ───────────────────────────
 jog_axis = 0   # index of last jogged joint (1/2/3); used for post-stop kinematics
 
 # ─────────────────────────── KINEMATICS ──────────────────────────────────────
-l1 = 18
+l1 = 24
 l2 = 21
 l3 = 35
 
 # Absolute (hardware) joint limits — used to clamp kinematic solutions
 J2_ABS_MIN, J2_ABS_MAX = -20,  90
-J3_ABS_MIN, J3_ABS_MAX = -85,  85
+J3_ABS_MIN, J3_ABS_MAX = -75,  85   # J3 min updated from -85° after mechanical testing
 
 
 def solve_d3(d2):
@@ -488,29 +493,104 @@ def calibrate_steppers(j1: Joint, j2: Joint, j3: Joint):
 
 
 
-# ─────────────────────────── PICK AND PLACE ──────────────────────────────────
-def pick_place():
-    global saved_movement_1, saved_movement_2
-    if not saved_movement_1 or not saved_movement_2:
-        print("❌ Save Position 1 and Position 2 first"); return
+# ─────────────────────────── GOTO POSITION (New PnP Command) ────────────────
+def goto_position(order, axis1_deg, axis2_deg, axis3_deg, gripper_action, tcp_sock=None):
+    """
+    Move all three axes CONCURRENTLY to the requested angles, then apply the
+    gripper, then respond to the backend via TCP.
+
+    Steps:
+      1. Check delta between current and requested angle for each axis.
+      2. Call target_deg() on every axis whose delta > 0.5 deg (non-blocking).
+         All three timers fire simultaneously — true concurrent movement.
+      3. Poll a single loop until all moving axes reach their targets.
+         Emergency / limit switch aborts the move at any point.
+      4. Execute gripper open/close.
+      5. Send /position_order=N/status=complete (or error) via TCP socket.
+
+    Response format:
+      /position_order=<order>/status=complete
+      /position_order=<order>/status=error:<reason>
+    """
+    global limit_triggered, gripper_state
+
+    def send_response(status):
+        resp = '/position_order={}/status={}\n'.format(order, status)
+        print('PnP response:', resp.strip())
+        if tcp_sock:
+            try:
+                tcp_sock.send(resp.encode())
+            except OSError as e:
+                print('TCP send error:', e)
+
+    # ── Pre-flight checks ────────────────────────────────────────────────────
     if limit_triggered:
-        print("⚠️ Pick & Place blocked — limit active."); return
+        send_response('error:limit_triggered')
+        return
+    if check_emergency():
+        send_response('error:emergency')
+        return
 
-    print("▶️ Moving to Position 1")
-    move_stepper(saved_movement_1[0], joint1)
-    solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
-    solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
-    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
+    try:
+        # ── Step 1: Clamp targets to joint limits ────────────────────────────
+        t1 = max(min(axis1_deg, joint1.maxDegree), joint1.minDegree)
+        t2 = max(min(axis2_deg, joint2.maxDegree), joint2.minDegree)
+        t3 = max(min(axis3_deg, joint3.maxDegree), joint3.minDegree)
 
-    if limit_triggered:
-        print("⚠️ Limit triggered. Aborting."); return
+        # Update kinematic coupling limits before moving
+        solve_d3(t2)
+        solve_d2(t3)
 
-    print("▶️ Moving to Position 2")
-    move_stepper(saved_movement_2[0], joint1)
-    solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
-    solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
-    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
-    print("✅ Pick and Place Complete")
+        # ── Step 2: Start concurrent movement on axes that need to move ──────
+        moving = []   # joints that are actively moving
+
+        if abs(t1 - joint1.currentDegree) > 0.5:
+            joint1.stepper.speed(joint1._jog_sps)
+            joint1.stepper.target_deg(t1)
+            moving.append(joint1)
+            print('J1 -> {:.1f}deg'.format(t1))
+
+        if abs(t2 - joint2.currentDegree) > 0.5:
+            joint2.stepper.speed(joint2._jog_sps)
+            joint2.stepper.target_deg(t2)
+            moving.append(joint2)
+            print('J2 -> {:.1f}deg'.format(t2))
+
+        if abs(t3 - joint3.currentDegree) > 0.5:
+            joint3.stepper.speed(joint3._jog_sps)
+            joint3.stepper.target_deg(t3)
+            moving.append(joint3)
+            print('J3 -> {:.1f}deg'.format(t3))
+
+        # ── Step 3: Poll until ALL axes reach their targets ──────────────────
+        while any(j.stepper._pos != j.stepper._target for j in moving):
+            if limit_triggered:
+                for j in moving: j.stepper.stop()
+                send_response('error:limit_triggered')
+                return
+            if check_emergency():
+                for j in moving: j.stepper.stop()
+                send_response('error:emergency')
+                return
+            time.sleep_ms(2)
+
+        print('All axes at target for position {}'.format(order))
+
+        # ── Step 4: Gripper ──────────────────────────────────────────────────
+        time.sleep_ms(200)   # brief settle before gripper moves
+        if gripper_action == 'open':
+            gripper.open()
+            gripper_state = 'open'
+        else:
+            gripper.close()
+            gripper_state = 'closed'
+
+        send_response('complete')
+        print('Position {} complete'.format(order))
+
+    except Exception as e:
+        send_response('error:{}'.format(str(e)))
+
 
 
 def pick_place_default():
@@ -529,7 +609,7 @@ def pick_place_default():
 
 
 # ─────────────────────────── HTTP HELPERS ────────────────────────────────────
-MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/pickplace', '/start_continuous']
+MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/position_order', '/start_continuous']
 
 
 def is_motor_path(path):
@@ -558,15 +638,15 @@ if __name__ == "__main__":
     joint2 = Joint(step_pin=13, dir_pin=7,
                    min_deg=-20, max_deg=70,
                    steps_per_rev=10500,          # (2625/90) × 360
-                   jog_sps=800,                  # ≈ 27.4°/s
-                   calib_sps=800,                # ≈ 27.4°/s
+                   jog_sps=550,                  # ≈ 18.9°/s  (reduced from 800 for torque)
+                   calib_sps=550,                # ≈ 18.9°/s
                    timer_id=-1, invert_dir=True)
 
     joint3 = Joint(step_pin=15, dir_pin=14,
-                   min_deg=-85, max_deg=85,
+                   min_deg=-75, max_deg=85,      # min updated from -85° after mechanical testing
                    steps_per_rev=10000,          # (2500/90) × 360
                    jog_sps=1111,                 # ≈ 40°/s
-                   calib_sps=1111,                # ≈ 40°/s
+                   calib_sps=1111,               # ≈ 40°/s
                    timer_id=-1, invert_dir=True)
 
     # ── Attach limit switch interrupts ───────────────────────────────────────
@@ -705,9 +785,29 @@ if __name__ == "__main__":
                     print("✅ Position 2 reached")
                 cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
 
-            elif path.startswith('/pickplace'):
-                pick_place()
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nPick Place Done')
+            elif path.startswith('/position_order='):
+                # Format: /position_order=N/axis_1=A/axis_2=B/axis_3=C/gripper=open|close
+                # Response is sent asynchronously via tcp_client after movement finishes
+                try:
+                    parts_raw = path.split('/')
+                    # Build dict from path segments
+                    params = {}
+                    for seg in parts_raw:
+                        if '=' in seg:
+                            k, v = seg.split('=', 1)
+                            params[k] = v
+                    order   = int(params.get('position_order', 0))
+                    ax1     = float(params.get('axis_1', 0))
+                    ax2     = float(params.get('axis_2', 0))
+                    ax3     = float(params.get('axis_3', 0))
+                    grip    = params.get('gripper', 'close')
+                    cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nACK')
+                    cl.close(); cl = None
+                    # Execute movement — response sent via TCP client socket
+                    goto_position(order, ax1, ax2, ax3, grip, tcp_client)
+                except Exception as e:
+                    if cl:
+                        cl.send('HTTP/1.0 400 Bad Request\r\n\r\n{}'.format(str(e)).encode())
 
             elif path.startswith('/start_continuous'):
                 continuous_run = True
@@ -746,7 +846,7 @@ if __name__ == "__main__":
 
         if tcp_client:
             try:
-                data = tcp_client.recv(64)
+                data = tcp_client.recv(256)   # 256 bytes — fits full /position_order command
                 if data:
                     for cmd in data.decode().strip().split('\n'):
                         cmd = cmd.strip()
@@ -762,6 +862,26 @@ if __name__ == "__main__":
                                         jog_motion(all_joints[ax - 1], d, tcp_client)
                                 except ValueError:
                                     pass
+                        # ── Pick & Place position command ──────────────────
+                        elif cmd.startswith('/position_order='):
+                            try:
+                                params = {}
+                                for seg in cmd.split('/'):
+                                    if '=' in seg:
+                                        k, v = seg.split('=', 1)
+                                        params[k] = v
+                                order = int(params.get('position_order', 0))
+                                ax1   = float(params.get('axis_1', 0))
+                                ax2   = float(params.get('axis_2', 0))
+                                ax3   = float(params.get('axis_3', 0))
+                                grip  = params.get('gripper', 'close')
+                                limit_triggered = False
+                                # Blocking call — sends response on tcp_client when done
+                                goto_position(order, ax1, ax2, ax3, grip, tcp_client)
+                            except Exception as e:
+                                err = '/position_order=0/status=error:{}\n'.format(str(e))
+                                try: tcp_client.send(err.encode())
+                                except: pass
                         # STOP is handled inside jog_motion() via tcp_sock.recv()
                 else:
                     tcp_client.close(); tcp_client = None
@@ -796,4 +916,3 @@ if __name__ == "__main__":
         gc.collect()
         # No idle sleep — all sockets are non-blocking so loop is naturally fast.
         # A sleep here adds direct latency to every HTTP request cycle.
-

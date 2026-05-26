@@ -3,6 +3,7 @@ import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-ro
 import Dashboard from './components/Dashboard';
 import ControlPanel from './components/ControlPanel';
 import ActionPanel from './components/ActionPanel';
+import RobotVisualization from './components/RobotVisualization';
 import ConnectionSetup from './components/ConnectionSetup';
 import Login from './components/Login';
 import Register from './components/Register';
@@ -72,6 +73,10 @@ function App() {
               <main className="page">
                 <p className="slbl">Live Dashboard</p>
                 <Dashboard state={systemState} />
+                <p className="slbl">Visualization</p>
+                <div className="cp visualization-container">
+                  <RobotVisualization state={systemState} />
+                </div>
                 <p className="slbl">Control Panel</p>
                 <ControlPanel state={systemState} setState={setSystemState} />
                 <ActionPanel state={systemState} setState={setSystemState} />
