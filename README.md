@@ -219,12 +219,19 @@ The frontend runs on `http://localhost:5173` and:
 - **Jog Buttons**: Press and hold to smoothly move a joint in real-time. Release to stop. Uses WebSocket → TCP for low-latency control.
 - **Dynamic Range Limits**: Joint 2 and Joint 3 limits update dynamically based on each other's position using inverse kinematics, preventing self-collision.
 
-### Actions
+### 3D Digital Twin Visualization
 
-- **Gripper**: Open/Close the servo-driven gripper.
+- **Real-Time Rendering**: View a live, interactive 3D model of the robotic arm using `three.js`.
+- **Forward Kinematics (FK)**: The web UI calculates exact real-world Cartesian coordinates (O, 1J2, 2J3, E) in real-time based on live joint angles.
+- **HUD & Telemetry**: Displays continuous X, Y, Z coordinates (in mm) for the end effector and joints, alongside a dynamic gripper state indicator.
+
+### Action Panel (Pick & Place)
+
+- **Drag-and-Drop Sequencer**: Build custom movement sequences by adding unlimited positions and reordering them dynamically.
+- **Save Configurations**: Save complex multi-step Pick & Place configurations to localStorage and reload them instantly.
+- **Pause & Resume**: Safely pause the robot mid-sequence and resume when ready.
+- **Loop Control**: Run the sequence a specific number of times or loop continuously.
 - **Calibrate**: Homes all three joints simultaneously by driving them to their limit switches, then returning to 0°.
-- **Pick & Place**: Save two positions, then execute an automated pick-and-place cycle between them.
-- **Continuous Mode**: Loop the pick-and-place sequence automatically.
 
 ### Admin Dashboard
 
@@ -302,6 +309,7 @@ The frontend runs on `http://localhost:5173` and:
 ![Vite](https://img.shields.io/badge/Vite-646CFF?style=for-the-badge&logo=vite&logoColor=white)
 ![React Router](https://img.shields.io/badge/React_Router_v7-CA4245?style=for-the-badge&logo=reactrouter&logoColor=white)
 ![Axios](https://img.shields.io/badge/Axios-5A29E4?style=for-the-badge&logo=axios&logoColor=white)
+![Three.js](https://img.shields.io/badge/Three.js-000000?style=for-the-badge&logo=threedotjs&logoColor=white)
 
 ### Hardware
 
