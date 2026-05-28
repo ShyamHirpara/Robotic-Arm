@@ -8,6 +8,7 @@ const L2 = 21;   // upper arm  (1J2 → 2J3)
 const L3 = 35;   // forearm    (2J3 → E)
 const BASE_W = 23.5;  // base box width (X)
 const BASE_D = 23.5;  // base box depth (Y)
+const BASE_H = 13;    // base box visual height — physical enclosure (NOT the shaft length L1=24)
 
 // Geometry radii (cm)
 const R_SHAFT = 1.0;
@@ -19,11 +20,16 @@ const GRIPPER_SZ = 3.0;
 function toRad(d) { return d * Math.PI / 180; }
 
 /**
- * Forward Kinematics — Robot frame: X=right, Y=forward(arm), Z=up
+ * Forward Kinematics — Robot frame: X=left(+), Y=forward(arm), Z=up
  *
  * s2 = 0°  → J2 points straight up   (+Z)
  * s3 = 0°  → J3 points horizontal   (+Y direction, absolute)
  * s1 = 0°  → arm plane aligned with +Y axis
+ *
+ * X axis convention (per user spec):
+ *   base rotates LEFT  → positive X
+ *   base rotates RIGHT → negative X
+ *   Achieved by negating the sin(r1) term on X.
  *
  * At calibration (s1=0, s2=0, s3=0):
  *   2J3 = (0, 0, 45)   E = (0, 35, 45)  ← matches coordinate-system.txt
@@ -31,11 +37,12 @@ function toRad(d) { return d * Math.PI / 180; }
 function computeFK(s1, s2, s3) {
   const r1 = toRad(s1), r2 = toRad(s2), r3 = toRad(s3);
 
-  // 2J3: top of J2, affected by J1 rotation (s1) and J2 lean (s2)
+  // 2J3: top of J2, affected by J1 rotation (s1) and J2 lean (s2).
+  // X is negated so that left rotation (positive s1) gives positive X.
   const J23 = {
-    x: L2 * Math.sin(r2) * Math.sin(r1),
-    y: L2 * Math.sin(r2) * Math.cos(r1),
-    z: L1 + L2 * Math.cos(r2),
+    x: -L2 * Math.sin(r2) * Math.sin(r1),
+    y:  L2 * Math.sin(r2) * Math.cos(r1),
+    z:  L1 + L2 * Math.cos(r2),
   };
 
   // E: J3 angle is measured relative to J2's frame (90° offset built in).
@@ -48,13 +55,14 @@ function computeFK(s1, s2, s3) {
   //
   // Verification at calibration (s1=0, s2=0, s3=0):
   //   E = (0, 35, 45) ✓
+  // X is negated (same sign convention as J23.x).
   const r23 = r2 - r3;   // compound angle: J3 absolute direction in arm plane
   return {
     O:   { x: 0, y: 0, z: 0 },
     J12: { x: 0, y: 0, z: L1 },
     J23,
     E: {
-      x: J23.x + L3 * Math.cos(r23) * Math.sin(r1),
+      x: J23.x - L3 * Math.cos(r23) * Math.sin(r1),
       y: J23.y + L3 * Math.cos(r23) * Math.cos(r1),
       z: J23.z - L3 * Math.sin(r23),
     },
@@ -113,7 +121,8 @@ export default function RobotVisualization({ state }) {
 
     // ── Camera ────────────────────────────────────────────────────────────────
     const camera = new THREE.PerspectiveCamera(45, el.clientWidth / el.clientHeight, 0.5, 600);
-    camera.position.set(100, 90, 100);
+    // Observer at robot-frame (100, 100, 40): r2t maps Z→Y, Y→Z → Three.js (100, 40, 100)
+    camera.position.set(100, 40, 100);
     camera.lookAt(0, L1 + L2 / 2, 0);
 
     // ── Orbit Controls ────────────────────────────────────────────────────────
@@ -187,15 +196,15 @@ export default function RobotVisualization({ state }) {
       color: 0x1e3a5f, metalness: 0.65, roughness: 0.35,
       transparent: true, opacity: 0.80,
     });
-    const baseBox = new THREE.Mesh(new THREE.BoxGeometry(BASE_W, L1, BASE_D), baseMat);
-    baseBox.position.set(0, L1 / 2, 0);
+    const baseBox = new THREE.Mesh(new THREE.BoxGeometry(BASE_W, BASE_H, BASE_D), baseMat);
+    baseBox.position.set(0, BASE_H / 2, 0);
     baseBox.castShadow = true;
     baseBox.receiveShadow = true;
     scene.add(baseBox);
 
     // Wireframe overlay on base box
     const baseEdges = new THREE.LineSegments(
-      new THREE.EdgesGeometry(new THREE.BoxGeometry(BASE_W, L1, BASE_D)),
+      new THREE.EdgesGeometry(new THREE.BoxGeometry(BASE_W, BASE_H, BASE_D)),
       new THREE.LineBasicMaterial({ color: 0x00d4ff, transparent: true, opacity: 0.5 })
     );
     baseEdges.position.copy(baseBox.position);
@@ -368,9 +377,11 @@ export default function RobotVisualization({ state }) {
     shadowCircle.position.z = p3.z;
 
     // HUD: coordinates in mm (× 10), display in robot frame (X,Y,Z)
+    // Y is negated per coordinate-system convention: arm extends toward the
+    // observer at s1=0, which is the negative-Y direction in the world frame.
     setHud({
-      J23: { x: fmt(J23.x), y: fmt(J23.y), z: fmt(J23.z) },
-      E:   { x: fmt(E.x),   y: fmt(E.y),   z: fmt(E.z)   },
+      J23: { x: fmt(J23.x), y: fmt(-J23.y), z: fmt(J23.z) },
+      E:   { x: fmt(E.x),   y: fmt(-E.y),   z: fmt(E.z)   },
       s1: s1.toFixed(1), s2: s2.toFixed(1), s3: s3.toFixed(1),
       open: isOpen,
     });
