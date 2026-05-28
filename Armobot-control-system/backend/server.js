@@ -168,7 +168,9 @@ let pnpCurrentIdx = 0;
 let pnpLoops = 0;
 let pnpCompleted = 0;
 let pnpStopFlag = false;
-let pnpPaused = false;   // pause flag — halts between steps
+let pnpPaused = false;   // pause flag — halts between steps (used in auto mode)
+let pnpMode = 'auto';    // 'auto' or 'manual'
+let pnpWaitingForManual = false; // true if manual mode step is completed and waiting for next command
 let pnpStepTimeout = null;    // response-wait timeout for current step
 let pnpInterStepTimer = null;  // 300ms inter-step delay (must be cancellable)
 let pnpResponseCb = null;
@@ -276,7 +278,7 @@ io.on('connection', (socket) => {
   });
 
   // ── Pick & Place: Start ────────────────────────────────────────────────────
-  socket.on('start_pnp', ({ positions }) => {
+  socket.on('start_pnp', ({ positions, mode = 'auto' }) => {
     if (pnpRunning) return;
     if (!positions || positions.length < 2) {
       socket.emit('pnp_status', { stopped: true, error: 'Need at least 2 positions.' });
@@ -288,6 +290,8 @@ io.on('connection', (socket) => {
     pnpRunning = true;
     pnpStopFlag = false;
     pnpPaused = false;
+    pnpMode = mode;
+    pnpWaitingForManual = false;
     pnpPositions = positions;
     pnpCurrentIdx = 0;
     pnpLoops = 0;
@@ -302,6 +306,7 @@ io.on('connection', (socket) => {
     console.log('[PnP] Stop requested.');
     pnpStopFlag = true;
     pnpPaused = false;
+    pnpWaitingForManual = false;
     if (pnpInterStepTimer) { clearTimeout(pnpInterStepTimer); pnpInterStepTimer = null; }
     if (pnpStepTimeout) { clearTimeout(pnpStepTimeout); pnpStepTimeout = null; }
     pnpResponseCb = null;
@@ -314,7 +319,7 @@ io.on('connection', (socket) => {
 
   // ── Pick & Place: Pause ───────────────────────────────────────────────────
   socket.on('pause_pnp', () => {
-    if (!pnpRunning || pnpPaused) return;
+    if (!pnpRunning || pnpPaused || pnpMode === 'manual') return;
     console.log('[PnP] Paused.');
     pnpPaused = true;
     // Cancel any pending inter-step timer so no new step fires while paused
@@ -323,20 +328,48 @@ io.on('connection', (socket) => {
       currentIdx: pnpCurrentIdx, completed: pnpCompleted,
       remaining: pnpPositions.length - pnpCurrentIdx - 1,
       loops: pnpLoops, stopped: false, paused: true,
+      mode: pnpMode, waitingForManual: pnpWaitingForManual
     });
   });
 
   // ── Pick & Place: Resume ──────────────────────────────────────────────────
   socket.on('resume_pnp', () => {
-    if (!pnpRunning || !pnpPaused) return;
+    if (!pnpRunning || !pnpPaused || pnpMode === 'manual') return;
     console.log('[PnP] Resumed.');
     pnpPaused = false;
     io.emit('pnp_status', {
       currentIdx: pnpCurrentIdx, completed: pnpCompleted,
       remaining: pnpPositions.length - pnpCurrentIdx - 1,
       loops: pnpLoops, stopped: false, paused: false,
+      mode: pnpMode, waitingForManual: pnpWaitingForManual
     });
     runPnpStep();
+  });
+
+  // ── Pick & Place: Manual Next/Prev ─────────────────────────────────────────
+  socket.on('pnp_manual_step', ({ direction }) => {
+    if (!pnpRunning || pnpMode !== 'manual' || !pnpWaitingForManual) return;
+    
+    if (direction === 'next') {
+      pnpCurrentIdx++;
+      if (pnpCurrentIdx >= pnpPositions.length) pnpCurrentIdx = 0;
+    } else if (direction === 'prev') {
+      pnpCurrentIdx--;
+      if (pnpCurrentIdx < 0) pnpCurrentIdx = pnpPositions.length - 1;
+    }
+    
+    console.log(`[PnP] Manual step ${direction} to idx ${pnpCurrentIdx}`);
+    runPnpStep();
+  });
+
+  // ── Pick & Place: Manual Goto Index ────────────────────────────────────────
+  socket.on('pnp_manual_goto', ({ index }) => {
+    if (!pnpRunning || pnpMode !== 'manual' || !pnpWaitingForManual) return;
+    if (index >= 0 && index < pnpPositions.length) {
+      pnpCurrentIdx = index;
+      console.log(`[PnP] Manual goto idx ${pnpCurrentIdx}`);
+      runPnpStep();
+    }
   });
 
   socket.on('disconnect', () => {
@@ -352,6 +385,9 @@ function broadcastPnpStatus() {
     remaining: pnpPositions.length - pnpCurrentIdx - 1,
     loops: pnpLoops,
     stopped: false,
+    paused: pnpPaused,
+    mode: pnpMode,
+    waitingForManual: pnpWaitingForManual
   });
 }
 
@@ -359,7 +395,9 @@ function runPnpStep() {
   if (pnpStopFlag || !pnpRunning) return;
 
   // ── Pause: hold here until resumed ──────────────────────────────────────
-  if (pnpPaused) return;  // resume_pnp will call runPnpStep() again
+  if (pnpPaused && pnpMode === 'auto') return;  // resume_pnp will call runPnpStep() again
+  
+  pnpWaitingForManual = false; // We are now executing a step
 
   const pos = pnpPositions[pnpCurrentIdx];
   const timeoutMs = calcTimeout(robotState, pos);
@@ -380,17 +418,19 @@ function runPnpStep() {
     return;
   }
 
-  // Set timeout for this step
-  pnpStepTimeout = setTimeout(() => {
-    console.error(`[PnP] Timeout on position ${pos.order}`);
-    pnpResponseCb = null;
-    pnpRunning = false;
-    // Send STOP so Pico aborts any in-progress movement before next run
-    if (picoSocket && !picoSocket.destroyed) {
-      picoSocket.write('STOP\n');
-    }
-    io.emit('pnp_status', { stopped: true, error: `Timeout on position ${pos.order}` });
-  }, timeoutMs);
+  // Set timeout for this step only if in auto mode
+  if (pnpMode === 'auto') {
+    pnpStepTimeout = setTimeout(() => {
+      console.error(`[PnP] Timeout on position ${pos.order}`);
+      pnpResponseCb = null;
+      pnpRunning = false;
+      // Send STOP so Pico aborts any in-progress movement before next run
+      if (picoSocket && !picoSocket.destroyed) {
+        picoSocket.write('STOP\n');
+      }
+      io.emit('pnp_status', { stopped: true, error: `Timeout on position ${pos.order}` });
+    }, timeoutMs);
+  }
 
   // Register one-shot response callback
   pnpResponseCb = (responseLine) => {
@@ -405,22 +445,29 @@ function runPnpStep() {
       robotState.s2 = pos.s2;
       robotState.s3 = pos.s3;
 
-      pnpCurrentIdx++;
+      if (pnpMode === 'auto') {
+        pnpCurrentIdx++;
 
-      if (pnpCurrentIdx >= pnpPositions.length) {
-        // One full loop done — loop back
-        pnpLoops++;
-        pnpCurrentIdx = 0;
-        console.log(`[PnP] Loop ${pnpLoops} complete. Restarting sequence.`);
-        broadcastPnpStatus();
-      }
+        if (pnpCurrentIdx >= pnpPositions.length) {
+          // One full loop done — loop back
+          pnpLoops++;
+          pnpCurrentIdx = 0;
+          console.log(`[PnP] Loop ${pnpLoops} complete. Restarting sequence.`);
+          broadcastPnpStatus();
+        }
 
-      if (!pnpStopFlag) {
-        // Inter-step delay then continue (cancellable so stop/pause works cleanly)
-        pnpInterStepTimer = setTimeout(() => { pnpInterStepTimer = null; runPnpStep(); }, 1500);
+        if (!pnpStopFlag) {
+          // Inter-step delay then continue (cancellable so stop/pause works cleanly)
+          pnpInterStepTimer = setTimeout(() => { pnpInterStepTimer = null; runPnpStep(); }, 1500);
+        } else {
+          pnpRunning = false;
+          io.emit('pnp_status', { stopped: true, reason: 'user_stop' });
+        }
       } else {
-        pnpRunning = false;
-        io.emit('pnp_status', { stopped: true, reason: 'user_stop' });
+        // Manual mode: Wait here for next command
+        pnpWaitingForManual = true;
+        console.log(`[PnP] Manual step complete. Waiting for user.`);
+        broadcastPnpStatus();
       }
     } else {
       // Error or emergency
