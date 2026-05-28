@@ -117,13 +117,7 @@ calib_hit_3     = False
 # Populated after joint init — used by stop_all_motors() / check_emergency()
 all_joints = []
 
-continuous_run   = False
 gripper_state    = 'closed'
-saved_movement_1 = []
-saved_movement_2 = []
-
-default_p1 = [-50.0, 50.0, -20.0]
-default_p2 = [ 40.0, 30.0, -30.0]
 
 dist_right = -1.0
 dist_left  = -1.0
@@ -593,23 +587,9 @@ def goto_position(order, axis1_deg, axis2_deg, axis3_deg, gripper_action, tcp_so
 
 
 
-def pick_place_default():
-    global limit_triggered
-    if limit_triggered:
-        return
-    move_stepper(default_p1[0], joint1)
-    solve_d3(default_p1[1]); move_stepper(default_p1[1], joint2)
-    solve_d2(default_p1[2]); move_stepper(default_p1[2], joint3)
-    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
-    if limit_triggered: return
-    move_stepper(default_p2[0], joint1)
-    solve_d3(default_p2[1]); move_stepper(default_p2[1], joint2)
-    solve_d2(default_p2[2]); move_stepper(default_p2[2], joint3)
-    time.sleep_ms(500); gripper.open(); time.sleep_ms(300); gripper.close(); time.sleep_ms(300)
-
-
 # ─────────────────────────── HTTP HELPERS ────────────────────────────────────
-MOTOR_PATHS = ['/stepper', '/run1', '/run2', '/position_order', '/start_continuous']
+# Only /stepper triggers limit_triggered reset — PnP commands come via TCP, not HTTP.
+MOTOR_PATHS = ['/stepper']
 
 
 def is_motor_path(path):
@@ -690,31 +670,6 @@ if __name__ == "__main__":
             if is_motor_path(path):
                 limit_triggered = False
 
-            # ── Serve image ──────────────────────────────────────────────────
-            if path.startswith('/arnobot.jpeg'):
-                try:
-                    with open('arnobot.jpeg', 'rb') as f:
-                        f.seek(0, 2); file_size = f.tell(); f.seek(0)
-                        cl.send(f'HTTP/1.0 200 OK\r\nContent-Type: image/jpeg\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'.encode())
-                        while True:
-                            chunk = f.read(1024)
-                            if not chunk: break
-                            cl.send(chunk); gc.collect()
-                except Exception as e:
-                    cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
-
-            elif path.startswith('/arnobot.png'):
-                try:
-                    with open('arnobot.png', 'rb') as f:
-                        f.seek(0, 2); file_size = f.tell(); f.seek(0)
-                        cl.send(f'HTTP/1.0 200 OK\r\nContent-Type: image/png\r\nContent-Length: {file_size}\r\nConnection: close\r\n\r\n'.encode())
-                        while True:
-                            chunk = f.read(1024)
-                            if not chunk: break
-                            cl.send(chunk); gc.collect()
-                except Exception as e:
-                    cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
-
             # ── Stepper control ──────────────────────────────────────────────
             elif path.startswith('/stepper'):
                 parts = path.split('?')[1].split('&')
@@ -728,15 +683,8 @@ if __name__ == "__main__":
                     solve_d2(angle); move_stepper(angle, joint3)
                 cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nOK')
 
-            elif path.startswith('/get_range3'):
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-                cl.send('{{"min":{},"max":{}}}'.format(min_s3, max_s3).encode())
-
-            elif path.startswith('/get_range2'):
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
-                cl.send('{{"min":{},"max":{}}}'.format(min_s2, max_s2).encode())
-
             elif path.startswith('/status'):
+                # Diagnostic endpoint — returns current joint angles, distances, emergency state
                 cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
                 cl.send('{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"dist_right":{:.1f},"dist_left":{:.1f},"emergency":{}}}'.format(
                     joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
@@ -754,68 +702,6 @@ if __name__ == "__main__":
             elif path.startswith('/calibrate'):
                 calibrate_steppers(joint1, joint2, joint3)
                 cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
-
-            elif path.startswith('/save_movement1'):
-                saved_movement_1.clear()
-                saved_movement_1.extend([joint1.currentDegree, joint2.currentDegree, joint3.currentDegree])
-                print("✓ Position 1 saved:", saved_movement_1)
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nPosition 1 Saved')
-
-            elif path.startswith('/save_movement2'):
-                saved_movement_2.clear()
-                saved_movement_2.extend([joint1.currentDegree, joint2.currentDegree, joint3.currentDegree])
-                print("✓ Position 2 saved:", saved_movement_2)
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nPosition 2 Saved')
-
-            elif path.startswith('/run1'):
-                if saved_movement_1 and not limit_triggered:
-                    move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
-                    move_stepper(saved_movement_1[0], joint1)
-                    solve_d3(saved_movement_1[1]); move_stepper(saved_movement_1[1], joint2)
-                    solve_d2(saved_movement_1[2]); move_stepper(saved_movement_1[2], joint3)
-                    print("✅ Position 1 reached")
-                cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
-
-            elif path.startswith('/run2'):
-                if saved_movement_2 and not limit_triggered:
-                    move_stepper(0, joint1); move_stepper(0, joint2); move_stepper(0, joint3)
-                    move_stepper(saved_movement_2[0], joint1)
-                    solve_d3(saved_movement_2[1]); move_stepper(saved_movement_2[1], joint2)
-                    solve_d2(saved_movement_2[2]); move_stepper(saved_movement_2[2], joint3)
-                    print("✅ Position 2 reached")
-                cl.send(b'HTTP/1.0 200 OK\r\n\r\nOK')
-
-            elif path.startswith('/position_order='):
-                # Format: /position_order=N/axis_1=A/axis_2=B/axis_3=C/gripper=open|close
-                # Response is sent asynchronously via tcp_client after movement finishes
-                try:
-                    parts_raw = path.split('/')
-                    # Build dict from path segments
-                    params = {}
-                    for seg in parts_raw:
-                        if '=' in seg:
-                            k, v = seg.split('=', 1)
-                            params[k] = v
-                    order   = int(params.get('position_order', 0))
-                    ax1     = float(params.get('axis_1', 0))
-                    ax2     = float(params.get('axis_2', 0))
-                    ax3     = float(params.get('axis_3', 0))
-                    grip    = params.get('gripper', 'close')
-                    cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nACK')
-                    cl.close(); cl = None
-                    # Execute movement — response sent via TCP client socket
-                    goto_position(order, ax1, ax2, ax3, grip, tcp_client)
-                except Exception as e:
-                    if cl:
-                        cl.send('HTTP/1.0 400 Bad Request\r\n\r\n{}'.format(str(e)).encode())
-
-            elif path.startswith('/start_continuous'):
-                continuous_run = True
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nContinuous Run Started')
-
-            elif path.startswith('/stop_continuous'):
-                continuous_run = False
-                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: text/plain\r\n\r\nContinuous Run Stopped')
 
             elif path.startswith('/favicon.ico'):
                 cl.send(b'HTTP/1.0 404 Not Found\r\n\r\n')
@@ -900,11 +786,6 @@ if __name__ == "__main__":
                 tcp_client.send(state_str.encode())
             except OSError:
                 tcp_client.close(); tcp_client = None
-
-        # ── Continuous run ────────────────────────────────────────────────────
-        if continuous_run and not limit_triggered and emergency_btn.value() == 0:
-            pick_place_default()
-            time.sleep(2)
 
         # ── Ultrasonic ────────────────────────────────────────────────────────
         dist_right = get_distance(us_right_trig, us_right_echo)
