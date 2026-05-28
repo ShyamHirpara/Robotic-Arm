@@ -587,14 +587,6 @@ def goto_position(order, axis1_deg, axis2_deg, axis3_deg, gripper_action, tcp_so
 
 
 
-# ─────────────────────────── HTTP HELPERS ────────────────────────────────────
-# Only /stepper triggers limit_triggered reset — PnP commands come via TCP, not HTTP.
-MOTOR_PATHS = ['/stepper']
-
-
-def is_motor_path(path):
-    return any(path.startswith(p) for p in MOTOR_PATHS)
-
 
 # ──────────────────────────────── MAIN ───────────────────────────────────────
 if __name__ == "__main__":
@@ -667,11 +659,9 @@ if __name__ == "__main__":
             path = request.split(' ')[1]
             print("Request:", path)
 
-            if is_motor_path(path):
-                limit_triggered = False
-
             # ── Stepper control ──────────────────────────────────────────────
-            elif path.startswith('/stepper'):
+            if path.startswith('/stepper'):
+                limit_triggered = False   # reset before any motor movement
                 parts = path.split('?')[1].split('&')
                 num   = int(parts[0].split('=')[1])
                 angle = float(parts[1].split('=')[1])
