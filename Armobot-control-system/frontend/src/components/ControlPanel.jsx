@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
@@ -24,8 +24,11 @@ function ControlPanel({ state, setState }) {
           max_s2: json.x2  !== undefined ? json.x2  : prev.max_s2,
           min_s3: json.n3  !== undefined ? json.n3  : prev.min_s3,
           max_s3: json.x3  !== undefined ? json.x3  : prev.max_s3,
+          gripper_state: json.gripper_state !== undefined ? json.gripper_state : prev.gripper_state,
         }));
-      } catch (e) { }
+      } catch (e) {
+        console.warn('Failed to parse robot_state payload:', e);
+      }
     });
     return () => socket.off('robot_state');
   }, [setState]);

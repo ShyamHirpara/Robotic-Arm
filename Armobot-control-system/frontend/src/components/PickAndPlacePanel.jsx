@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:3000');
@@ -125,9 +125,16 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
   const [isRunning,   setIsRunning]   = useState(false);
   const [isPaused,    setIsPaused]    = useState(false);
   const [runStats,    setRunStats]    = useState(null);
-  const [savedNames,  setSavedNames]  = useState([]);
+  const loadInitialNames = () => Object.keys(localStorage).filter(k => k.startsWith('pnp_')).map(k => k.slice(4));
+  const [savedNames,  setSavedNames]  = useState(loadInitialNames);
   const [loadedName,  setLoadedName]  = useState('');
   const [pnpMode,     setPnpMode]     = useState('auto'); // 'auto' | 'manual'
+  
+  // ── Elapsed timer state ───────────────────────────────────────────────────
+  const timerRef     = useRef(null);
+  const startTimeRef = useRef(null);
+  const pausedAtRef  = useRef(0);
+  const [elapsed, setElapsed] = useState(0);
 
   // Sync running state up to App
   useEffect(() => {
@@ -142,7 +149,6 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
   const refreshSavedNames = () => {
     setSavedNames(Object.keys(localStorage).filter(k => k.startsWith('pnp_')).map(k => k.slice(4)));
   };
-  useEffect(() => { refreshSavedNames(); }, []);
 
   const handleSaveConfig = () => {
     const name = window.prompt('Enter a name for this configuration:');
@@ -227,6 +233,8 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
         setIsRunning(false);
         setIsPaused(false);
         setRunStats(null);
+        setElapsed(0);
+        pausedAtRef.current = 0;
       } else {
         setIsPaused(!!data.paused);
         if (data.mode) setPnpMode(data.mode);
@@ -258,6 +266,8 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
     setIsRunning(false);
     setIsPaused(false);
     setRunStats(null);
+    setElapsed(0);
+    pausedAtRef.current = 0;
   };
   
   const handleNext = () => socket.emit('pnp_manual_step', { direction: 'next' });
@@ -265,10 +275,6 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
   const handleGoto = (index) => socket.emit('pnp_manual_goto', { index });
 
   // ── Elapsed timer ─────────────────────────────────────────────────────────
-  const timerRef     = useRef(null);
-  const startTimeRef = useRef(null);
-  const pausedAtRef  = useRef(0);
-  const [elapsed, setElapsed] = useState(0);
 
   useEffect(() => {
     // In manual mode, we might want to keep timer running or not, but typically if it's running it shouldn't be paused unless explicitly paused
@@ -282,7 +288,6 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
     } else {
       clearInterval(timerRef.current);
     }
-    if (!isRunning) { setElapsed(0); pausedAtRef.current = 0; }
     return () => clearInterval(timerRef.current);
   }, [isRunning, isPaused]);
 

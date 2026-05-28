@@ -1,9 +1,9 @@
-import React from 'react';
+
 import axios from 'axios';
 
 const API_BASE = '/pico';
 
-function GripperPanel({ state, setState, isRunning }) {
+function GripperPanel({ setState, isRunning }) {
   const gCmd = (action) => {
     setState(prev => ({ ...prev, gripper_state: action }));
     axios.get(`${API_BASE}/gripper?action=${action}`).catch(console.error);

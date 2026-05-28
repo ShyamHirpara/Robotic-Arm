@@ -241,6 +241,7 @@ function connectToPico() {
         robotState.s1 = json.s1 !== undefined ? json.s1 : robotState.s1;
         robotState.s2 = json.s2 !== undefined ? json.s2 : robotState.s2;
         robotState.s3 = json.s3 !== undefined ? json.s3 : robotState.s3;
+        robotState.gripper_state = json.gripper_state !== undefined ? json.gripper_state : robotState.gripper_state;
         io.emit('robot_state', line);
       } catch (e) { /* not JSON — ignore */ }
     }

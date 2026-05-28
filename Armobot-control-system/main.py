@@ -769,9 +769,9 @@ if __name__ == "__main__":
         now = time.ticks_ms()
         if tcp_client and time.ticks_diff(now, last_tcp_send) > 100:
             last_tcp_send = now
-            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{}}}\n'.format(
+            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{},"gripper_state":"{}"}}\n'.format(
                 joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
-                min_s2, max_s2, min_s3, max_s3)
+                min_s2, max_s2, min_s3, max_s3, gripper_state)
             try:
                 tcp_client.send(state_str.encode())
             except OSError:
