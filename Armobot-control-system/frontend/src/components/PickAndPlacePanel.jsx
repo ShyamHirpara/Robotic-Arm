@@ -151,17 +151,24 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
   };
 
   const handleSaveConfig = () => {
-    const name = window.prompt('Enter a name for this configuration:');
+    const name = loadedName.trim() || window.prompt('Enter a name for this configuration:');
     if (!name || !name.trim()) return;
     localStorage.setItem('pnp_' + name.trim(), JSON.stringify(positions));
+    setLoadedName(name.trim());
     refreshSavedNames();
-    alert(`Configuration "${name.trim()}" saved!`);
   };
 
-  const handleLoadConfig = (name) => {
-    if (!name) return;
-    const raw = localStorage.getItem('pnp_' + name);
-    if (raw) { setPositions(JSON.parse(raw)); setLoadedName(name); }
+  const handleLoadConfig = (value) => {
+    if (!value) return;
+    if (value === '__new__') {
+      const name = window.prompt('Enter a name for the new configuration:');
+      if (!name || !name.trim()) return;
+      setPositions([]);
+      setLoadedName(name.trim());
+      return;
+    }
+    const raw = localStorage.getItem('pnp_' + value);
+    if (raw) { setPositions(JSON.parse(raw)); setLoadedName(value); }
   };
 
   // ── Save current robot position ───────────────────────────────────────────
@@ -349,22 +356,21 @@ function PickAndPlacePanel({ state, onIsRunningChange }) {
             </span>
           </div>
 
-          {/* Load saved config */}
-          {savedNames.length > 0 && (
-            <div className="pnp-load-row">
-              <label className="pnp-load-label">Load saved:</label>
-              <select
-                id="pnp-load-select"
-                className="pnp-select"
-                value={loadedName}
-                onChange={e => handleLoadConfig(e.target.value)}
-                disabled={isRunning}
-              >
-                <option value="">-- select --</option>
-                {savedNames.map(n => <option key={n} value={n}>{n}</option>)}
-              </select>
-            </div>
-          )}
+          {/* Configuration selector */}
+          <div className="pnp-load-row">
+            <label className="pnp-load-label">Configuration:</label>
+            <select
+              id="pnp-load-select"
+              className="pnp-select"
+              value={loadedName}
+              onChange={e => handleLoadConfig(e.target.value)}
+              disabled={isRunning}
+            >
+              <option value="">-- select --</option>
+              <option value="__new__">✚ New Configuration…</option>
+              {savedNames.map(n => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
 
           {/* Save current position */}
           <button
