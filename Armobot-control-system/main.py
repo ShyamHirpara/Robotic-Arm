@@ -103,9 +103,9 @@ class Joint:
 
 # ─────────────────────────── CONSTANTS ───────────────────────────────────────
 # Angles set after each joint hits its limit switch during calibration.
-LIMIT_ANGLE_1 =  155.0   # J1 positive limit
+LIMIT_ANGLE_1 =  160.0   # J1 positive limit
 LIMIT_ANGLE_2 =  -25.0   # J2 negative limit
-LIMIT_ANGLE_3 =   90.0   # J3 positive limit
+LIMIT_ANGLE_3 =   86.0   # J3 positive limit
 
 # ─────────────────────────── GLOBAL STATE ────────────────────────────────────
 limit_triggered = False
