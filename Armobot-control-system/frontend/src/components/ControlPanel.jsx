@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import { io } from 'socket.io-client';
 
@@ -46,6 +46,70 @@ function ControlPanel({ state, setState }) {
     }
   };
 
+  // ── Keyboard jog (arrow keys) ─────────────────────────────────────────────
+  // selectedCard ref so the effect closure always sees the latest value
+  const selectedCardRef = useRef(selectedCard);
+  useEffect(() => { selectedCardRef.current = selectedCard; }, [selectedCard]);
+  const activeBtnRef = useRef(activeBtn);
+  useEffect(() => { activeBtnRef.current = activeBtn; }, [activeBtn]);
+
+  useEffect(() => {
+    // Axis-1: ArrowLeft / ArrowRight
+    // Axis-2: ArrowUp (dir 0 = Up) / ArrowDown (dir 1 = Down)
+    // Axis-3: ArrowUp (dir 1 = Up) / ArrowDown (dir 0 = Down)  — mirrors Axis-2 visually
+    const KEY_MAP = {
+      ArrowLeft:  { axis: 1, dir: 0 },
+      ArrowRight: { axis: 1, dir: 1 },
+      ArrowUp:    { axis: null, dirFor2: 0, dirFor3: 1 },
+      ArrowDown:  { axis: null, dirFor2: 1, dirFor3: 0 },
+    };
+
+    const resolveKey = (key) => {
+      const card = selectedCardRef.current;
+      if (key === 'ArrowLeft'  && card === 1) return { axis: 1, dir: 0 };
+      if (key === 'ArrowRight' && card === 1) return { axis: 1, dir: 1 };
+      if (key === 'ArrowUp'    && card === 2) return { axis: 2, dir: 0 };
+      if (key === 'ArrowDown'  && card === 2) return { axis: 2, dir: 1 };
+      if (key === 'ArrowUp'    && card === 3) return { axis: 3, dir: 1 };
+      if (key === 'ArrowDown'  && card === 3) return { axis: 3, dir: 0 };
+      return null;
+    };
+
+    const isInputFocused = () => {
+      const tag = document.activeElement?.tagName;
+      return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT';
+    };
+
+    const onKeyDown = (e) => {
+      if (isInputFocused()) return;
+      const mapped = resolveKey(e.key);
+      if (!mapped) return;
+      e.preventDefault(); // stop page scroll
+      if (activeBtnRef.current) return; // another jog already active
+      const { axis, dir } = mapped;
+      setActiveBtn(`${axis}-${dir}`);
+      socket.emit('jog_start', { axis, dir });
+    };
+
+    const onKeyUp = (e) => {
+      if (isInputFocused()) return;
+      const mapped = resolveKey(e.key);
+      if (!mapped) return;
+      const { axis, dir } = mapped;
+      if (activeBtnRef.current === `${axis}-${dir}`) {
+        setActiveBtn(null);
+        socket.emit('jog_stop', { axis, dir });
+      }
+    };
+
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup',   onKeyUp);
+    return () => {
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup',   onKeyUp);
+    };
+  }, []); // runs once — reads latest values via refs
+
   const getBtnStyle = (axis, dir, colorType = dir) => {
     const key = `${axis}-${dir}`;
     const isActive = activeBtn === key;
@@ -85,7 +149,7 @@ function ControlPanel({ state, setState }) {
 
   const sendAngle = async (axis, val) => {
     let min, max;
-    if (axis === 1) { min = -175; max = 175; }
+    if (axis === 1) { min = -170; max = 150; }
     if (axis === 2) { min = state.min_s2; max = state.max_s2; }
     if (axis === 3) { min = state.min_s3; max = state.max_s3; }
 
@@ -124,13 +188,13 @@ function ControlPanel({ state, setState }) {
           <div className="at">Axis 1 Base <span className="acur">{state.s1}deg</span></div>
           <div className="ir">
             <input 
-              type="number" className="ti" placeholder="-175 to 175" min="-175" max="175" 
+              type="number" className="ti" placeholder="-170 to 150" min="-170" max="150" 
               value={inputs.i1} onChange={(e) => handleInputChange(1, e.target.value)}
               onKeyDown={(e) => e.key === 'Enter' && handleApply(1)}
             />
             <button className="ap" onClick={() => handleApply(1)}>Apply</button>
           </div>
-          <div className="ri">Range: -175 to 175 deg</div>
+          <div className="ri">Range: -170 to 150 deg</div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
             <button style={getBtnStyle(1, 0)} disabled={activeBtn !== null && activeBtn !== '1-0'}
               onPointerDown={() => handleJogStart(1, 0)} onPointerUp={() => handleJogStop(1, 0)} onPointerLeave={() => handleJogStop(1, 0)}

@@ -601,7 +601,7 @@ if __name__ == "__main__":
     # Adjust invert_dir per joint if motor runs the wrong way after testing.
 
     joint1 = Joint(step_pin=11, dir_pin=9,
-                   min_deg=-175, max_deg=150,
+                   min_deg=-170, max_deg=150,
                    steps_per_rev=7971,          # (3875/175) × 360
                    jog_sps=600,                # ≈ 27°/s
                    calib_sps=1000,               # ≈ 45°/s

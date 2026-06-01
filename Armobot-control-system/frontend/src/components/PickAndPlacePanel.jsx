@@ -3,11 +3,11 @@ import { io } from 'socket.io-client';
 
 const socket = io('http://localhost:3000');
 
-// Absolute joint limits (mirrors Pico firmware constants)
+// Absolute joint limits (mirrors Pico firmware — joint1/joint2/joint3 init in main.py)
 const JOINT_LIMITS = {
-  s1: { min: -175, max: 175 },
-  s2: { min: -20,  max: 90  },
-  s3: { min: -85,  max: 85  },
+  s1: { min: -170, max: 150 },
+  s2: { min: -20,  max: 70  },
+  s3: { min: -75,  max: 85  },
 };
 
 // ── Position Card (with edit + drag handle) ───────────────────────────────────
