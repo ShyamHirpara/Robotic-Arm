@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import { useState, useEffect } from 'react';
 import { BrowserRouter as Router, Routes, Route, Navigate, Link } from 'react-router-dom';
 import Dashboard from './components/Dashboard';
 import ControlPanel from './components/ControlPanel';
@@ -7,12 +7,15 @@ import PickAndPlacePanel from './components/PickAndPlacePanel';
 import RobotVisualization from './components/RobotVisualization';
 import ConnectionSetup from './components/ConnectionSetup';
 import Login from './components/Login';
-import Register from './components/Register';
 import AdminDashboard from './components/AdminDashboard';
 import './index.css';
 
 function App() {
-  const [auth, setAuth] = useState(null);
+  const [auth, setAuth] = useState(() => {
+    const token = localStorage.getItem('token');
+    const user = localStorage.getItem('user');
+    return token && user ? { token, user: JSON.parse(user) } : null;
+  });
   const [isConnected, setIsConnected] = useState(false);
   const [isPnpRunning, setIsPnpRunning] = useState(false);
   const [systemState, setSystemState] = useState({
@@ -20,14 +23,6 @@ function App() {
     min_s2: -20, max_s2: 70, min_s3: -75, max_s3: 85,
     gripper_state: 'closed', limit_triggered: false
   });
-
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const user = localStorage.getItem('user');
-    if (token && user) {
-      setAuth({ token, user: JSON.parse(user) });
-    }
-  }, []);
 
   const handleLogout = () => {
     localStorage.removeItem('token');
@@ -46,15 +41,24 @@ function App() {
           {auth ? (
             <>
               {auth.user.role === 'admin' && (
-                <Link to="/admin" style={{ marginRight: '15px', color: '#5c3d11', fontWeight: 'bold', textDecoration: 'none' }}>Admin</Link>
+                <Link to="/admin" style={{ marginRight: '15px', color: '#cc2e20', fontWeight: 'bold', textDecoration: 'none', fontFamily: 'Rajdhani, sans-serif', letterSpacing: '1px' }}>Admin</Link>
               )}
-              <Link to="/" style={{ marginRight: '15px', color: '#5c3d11', fontWeight: 'bold', textDecoration: 'none' }}>Control</Link>
+              <Link to="/" style={{ marginRight: '15px', color: '#f0ece8', fontWeight: 'bold', textDecoration: 'none', fontFamily: 'Rajdhani, sans-serif', letterSpacing: '1px' }}>Control</Link>
               <button onClick={handleLogout} className="btn bclose" style={{ padding: '5px 10px' }}>Logout</button>
             </>
           ) : (
-            <Link to="/login" className="btn" style={{ background: '#d4a96a', color: '#fff', textDecoration: 'none' }}>Login</Link>
+            <Link to="/login" className="btn" style={{ background: 'rgba(204,46,32,0.12)', border: '1px solid rgba(204,46,32,0.3)', color: '#cc2e20', textDecoration: 'none', fontFamily: 'Rajdhani, sans-serif' }}>Login</Link>
           )}
         </div>
+        <img
+          src="/armobot-logo.png"
+          alt="ARMOBOT Logo"
+          className="hdr-logo"
+          style={{
+            filter: 'brightness(1.1) drop-shadow(0 0 8px rgba(204,46,32,0.7)) drop-shadow(0 0 20px rgba(204,46,32,0.3))',
+            opacity: 1
+          }}
+        />
       </header>
 
       <Routes>

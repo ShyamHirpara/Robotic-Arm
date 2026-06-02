@@ -23,7 +23,7 @@ function Register() {
     <div className="page" style={{ maxWidth: '400px', marginTop: '40px' }}>
       <div className="cp">
         <h2 className="pt">Register</h2>
-        {error && <p style={{ color: 'red', fontSize: '0.9em', marginBottom: '10px' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--fire-bright)', fontSize: '0.9em', marginBottom: '10px' }}>{error}</p>}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <input 
             type="text" className="ti" placeholder="Username" 
@@ -35,8 +35,8 @@ function Register() {
           />
           <button type="submit" className="ap" style={{ marginTop: '10px' }}>Register</button>
         </form>
-        <p style={{ marginTop: '15px', fontSize: '0.8em', textAlign: 'center' }}>
-          Already have an account? <Link to="/login">Login here</Link>
+        <p style={{ marginTop: '15px', fontSize: '0.8em', textAlign: 'center', color: 'var(--txt-dim)' }}>
+          Already have an account? <Link to="/login" style={{ color: 'var(--cyan)' }}>Login here</Link>
         </p>
       </div>
     </div>

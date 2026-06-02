@@ -87,12 +87,13 @@ function AdminDashboard({ auth }) {
 
   const tabButtonStyle = (tabName) => ({
     padding: '8px 16px',
-    borderRadius: '8px',
-    border: '1px solid #d4a96a',
-    background: activeTab === tabName ? '#d4a96a' : 'transparent',
-    color: activeTab === tabName ? '#fff' : '#d4a96a',
+    borderRadius: 'var(--radius-sm)',
+    border: '1px solid var(--fire-dim)',
+    background: activeTab === tabName ? 'var(--fire-glow)' : 'transparent',
+    color: activeTab === tabName ? 'var(--fire)' : 'var(--txt-muted)',
     cursor: 'pointer',
     fontWeight: 'bold',
+    fontFamily: 'Rajdhani, sans-serif',
     transition: 'all 0.2s'
   });
 
@@ -107,19 +108,19 @@ function AdminDashboard({ auth }) {
         </div>
       </div>
       
-      {error && <p style={{ color: 'red' }}>{error}</p>}
+      {error && <p style={{ color: 'var(--fire-bright)' }}>{error}</p>}
 
       {/* ===== USERS TAB ===== */}
       {activeTab === 'users' && (
         <div className="cp" style={{ animation: 'fadeIn 0.3s' }}>
           <h3 className="pt" style={{ marginBottom: '5px' }}>All Users</h3>
-          <p style={{ fontSize: '0.85em', color: '#888', marginBottom: '20px' }}>
+          <p style={{ fontSize: '0.85em', color: 'var(--txt-dim)', marginBottom: '20px' }}>
             ● {users.length} user{users.length !== 1 ? 's' : ''} registered
           </p>
           
           <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '0.9em' }}>
             <thead>
-              <tr style={{ borderBottom: '1px solid #e8d5b0', color: '#5c3d11' }}>
+              <tr style={{ borderBottom: '1px solid var(--border)', color: 'var(--txt-muted)' }}>
                 <th style={{ padding: '10px' }}>ID</th>
                 <th style={{ padding: '10px' }}>Username</th>
                 <th style={{ padding: '10px' }}>Company</th>
@@ -131,18 +132,18 @@ function AdminDashboard({ auth }) {
             </thead>
             <tbody>
               {users.map(u => (
-                <tr key={u.id} style={{ borderBottom: '1px solid #fdf6ec' }}>
+                <tr key={u.id} style={{ borderBottom: '1px solid var(--surface2)' }}>
                   <td style={{ padding: '10px' }}>#{u.id}</td>
                   <td style={{ padding: '10px', fontWeight: 'bold' }}>{u.username}</td>
-                  <td style={{ padding: '10px', color: '#666' }}>{u.company || '—'}</td>
-                  <td style={{ padding: '10px', color: '#666' }}>{u.address || '—'}</td>
-                  <td style={{ padding: '10px', color: '#666' }}>{u.city || '—'}</td>
-                  <td style={{ padding: '10px', color: '#666' }}>{u.country || '—'}</td>
-                  <td style={{ padding: '10px', color: '#666' }}>{new Date(u.created_at).toLocaleDateString() || '—'}</td>
+                  <td style={{ padding: '10px', color: 'var(--txt-dim)' }}>{u.company || '—'}</td>
+                  <td style={{ padding: '10px', color: 'var(--txt-dim)' }}>{u.address || '—'}</td>
+                  <td style={{ padding: '10px', color: 'var(--txt-dim)' }}>{u.city || '—'}</td>
+                  <td style={{ padding: '10px', color: 'var(--txt-dim)' }}>{u.country || '—'}</td>
+                  <td style={{ padding: '10px', color: 'var(--txt-dim)' }}>{new Date(u.created_at).toLocaleDateString() || '—'}</td>
                 </tr>
               ))}
               {users.length === 0 && (
-                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: '#888' }}>🔍 No users found.</td></tr>
+                <tr><td colSpan="7" style={{ textAlign: 'center', padding: '30px', color: 'var(--txt-dim)' }}>🔍 No users found.</td></tr>
               )}
             </tbody>
           </table>
@@ -155,27 +156,27 @@ function AdminDashboard({ auth }) {
           <h3 className="pt" style={{ marginBottom: '20px' }}>Register New User</h3>
           <form onSubmit={handleRegister} style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '15px' }}>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>Username</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>Username</label>
               <input type="text" className="ti" value={formData.username} onChange={e => setFormData({...formData, username: e.target.value})} required />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>Password</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>Password</label>
               <input type="password" className="ti" value={formData.password} onChange={e => setFormData({...formData, password: e.target.value})} required />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', gridColumn: '1 / -1' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>Company Name</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>Company Name</label>
               <input type="text" className="ti" value={formData.company} onChange={e => setFormData({...formData, company: e.target.value})} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px', gridColumn: '1 / -1' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>Address</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>Address</label>
               <input type="text" className="ti" value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>City</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>City</label>
               <input type="text" className="ti" value={formData.city} onChange={e => setFormData({...formData, city: e.target.value})} />
             </div>
             <div style={{ display: 'flex', flexDirection: 'column', gap: '5px' }}>
-              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: '#5c3d11' }}>Country</label>
+              <label style={{ fontSize: '0.85em', fontWeight: 'bold', color: 'var(--txt-muted)' }}>Country</label>
               <input type="text" className="ti" value={formData.country} onChange={e => setFormData({...formData, country: e.target.value})} />
             </div>
             <div style={{ gridColumn: '1 / -1', marginTop: '10px' }}>
@@ -194,12 +195,12 @@ function AdminDashboard({ auth }) {
               <div key={u.id}>
                 <div style={{ 
                   display: 'flex', justifyContent: 'space-between', alignItems: 'center', 
-                  padding: '12px 16px', background: '#fdf6ec', borderRadius: '8px', border: '1px solid #e8d5b0',
-                  boxShadow: isEditingId === u.id ? '0 0 0 2px #d4a96a' : 'none'
+                  padding: '12px 16px', background: 'var(--bg2)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)',
+                  boxShadow: isEditingId === u.id ? '0 0 0 2px var(--fire)' : 'none'
                 }}>
                   <div>
                     <div style={{ fontWeight: 'bold', fontSize: '1.05em' }}>{u.username}</div>
-                    <div style={{ fontSize: '0.8em', color: '#888' }}>
+                    <div style={{ fontSize: '0.8em', color: 'var(--txt-dim)' }}>
                       ID #{u.id} {u.company ? `· ${u.company}` : ''} {u.city ? `· ${u.city}` : ''} {u.country ? `, ${u.country}` : ''}
                     </div>
                   </div>
@@ -213,10 +214,10 @@ function AdminDashboard({ auth }) {
 
                 {isEditingId === u.id && (
                   <form onSubmit={handleUpdate} style={{ 
-                    marginTop: '10px', padding: '15px', background: '#fff', borderRadius: '8px', border: '1px solid #d4a96a',
+                    marginTop: '10px', padding: '15px', background: 'var(--bg)', borderRadius: 'var(--radius-sm)', border: '1px solid var(--fire-dim)',
                     display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '10px'
                   }}>
-                    <div style={{ gridColumn: '1 / -1', fontWeight: 'bold', color: '#d4a96a', marginBottom: '5px' }}>Editing: {u.username}</div>
+                    <div style={{ gridColumn: '1 / -1', fontWeight: 'bold', color: 'var(--fire)', marginBottom: '5px' }}>Editing: {u.username}</div>
                     
                     <input type="text" className="ti" placeholder="Username" value={editData.username} onChange={e => setEditData({...editData, username: e.target.value})} required />
                     <input type="password" className="ti" placeholder="New Password (leave blank to keep)" value={editData.password} onChange={e => setEditData({...editData, password: e.target.value})} />

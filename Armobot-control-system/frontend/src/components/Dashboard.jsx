@@ -1,8 +1,8 @@
-import React from 'react';
+
 
 function Dashboard({ state }) {
   const gIcon = state.gripper_state === 'open' ? 'OPEN' : 'CLOSED';
-  const gColor = state.gripper_state === 'open' ? '#2e7d32' : '#b71c1c';
+  const gColor = state.gripper_state === 'open' ? '#44bb66' : '#ff6666';
 
   return (
     <div className="dgrid">

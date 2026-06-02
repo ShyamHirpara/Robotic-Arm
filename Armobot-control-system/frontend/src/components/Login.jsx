@@ -25,7 +25,7 @@ function Login({ setAuth }) {
     <div className="page" style={{ maxWidth: '400px', marginTop: '40px' }}>
       <div className="cp">
         <h2 className="pt">Login</h2>
-        {error && <p style={{ color: 'red', fontSize: '0.9em', marginBottom: '10px' }}>{error}</p>}
+        {error && <p style={{ color: 'var(--fire-bright)', fontSize: '0.9em', marginBottom: '10px' }}>{error}</p>}
         <form onSubmit={handleSubmit} style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           <input 
             type="text" className="ti" placeholder="Username" 

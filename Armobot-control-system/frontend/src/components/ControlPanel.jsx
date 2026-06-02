@@ -110,26 +110,14 @@ function ControlPanel({ state, setState }) {
     };
   }, []); // runs once — reads latest values via refs
 
-  const getBtnStyle = (axis, dir, colorType = dir) => {
+  const getBtnClass = (axis, dir, type = dir) => {
     const key = `${axis}-${dir}`;
     const isActive = activeBtn === key;
-    const isDisabled = activeBtn !== null && activeBtn !== key;
-    
-    let bg = '#ccc';
-    if (!isDisabled) {
-      if (colorType === 0) {
-        bg = isActive ? '#1b5e20' : '#4caf50';
-      } else {
-        bg = isActive ? '#7f0000' : '#ef5350';
-      }
-    }
-
-    return {
-      padding: '8px 12px', borderRadius: '6px', border: 'none', 
-      background: bg, color: '#fff', fontWeight: 'bold', 
-      cursor: isDisabled ? 'not-allowed' : 'pointer', flex: 1, touchAction: 'none',
-      transition: 'background 0.1s', opacity: isDisabled ? 0.5 : 1
-    };
+    let cls = 'btn-jog ';
+    // colorType 0 = bwd (steel), 1 = fwd (fire)
+    cls += type === 0 ? 'bwd ' : 'fwd ';
+    if (isActive) cls += 'active ';
+    return cls;
   };
 
 
@@ -196,10 +184,10 @@ function ControlPanel({ state, setState }) {
           </div>
           <div className="ri">Range: -170 to 150 deg</div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-            <button style={getBtnStyle(1, 0)} disabled={activeBtn !== null && activeBtn !== '1-0'}
+            <button className={getBtnClass(1, 0)} disabled={activeBtn !== null && activeBtn !== '1-0'}
               onPointerDown={() => handleJogStart(1, 0)} onPointerUp={() => handleJogStop(1, 0)} onPointerLeave={() => handleJogStop(1, 0)}
             >&#9664; Left</button>
-            <button style={getBtnStyle(1, 1)} disabled={activeBtn !== null && activeBtn !== '1-1'}
+            <button className={getBtnClass(1, 1)} disabled={activeBtn !== null && activeBtn !== '1-1'}
               onPointerDown={() => handleJogStart(1, 1)} onPointerUp={() => handleJogStop(1, 1)} onPointerLeave={() => handleJogStop(1, 1)}
             >Right &#9654;</button>
           </div>
@@ -218,10 +206,10 @@ function ControlPanel({ state, setState }) {
           </div>
           <div className="ri">Range: {state.min_s2} to {state.max_s2} deg</div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-            <button style={getBtnStyle(2, 1, 0)} disabled={activeBtn !== null && activeBtn !== '2-1'}
+            <button className={getBtnClass(2, 1, 0)} disabled={activeBtn !== null && activeBtn !== '2-1'}
               onPointerDown={() => handleJogStart(2, 1)} onPointerUp={() => handleJogStop(2, 1)} onPointerLeave={() => handleJogStop(2, 1)}
             >&#9660; Down</button>
-            <button style={getBtnStyle(2, 0, 1)} disabled={activeBtn !== null && activeBtn !== '2-0'}
+            <button className={getBtnClass(2, 0, 1)} disabled={activeBtn !== null && activeBtn !== '2-0'}
               onPointerDown={() => handleJogStart(2, 0)} onPointerUp={() => handleJogStop(2, 0)} onPointerLeave={() => handleJogStop(2, 0)}
             >Up &#9650;</button>
           </div>
@@ -240,10 +228,10 @@ function ControlPanel({ state, setState }) {
           </div>
           <div className="ri">Range: {state.min_s3} to {state.max_s3} deg</div>
           <div style={{ display: 'flex', gap: '10px', marginTop: '10px' }}>
-            <button style={getBtnStyle(3, 0)} disabled={activeBtn !== null && activeBtn !== '3-0'}
+            <button className={getBtnClass(3, 0)} disabled={activeBtn !== null && activeBtn !== '3-0'}
               onPointerDown={() => handleJogStart(3, 0)} onPointerUp={() => handleJogStop(3, 0)} onPointerLeave={() => handleJogStop(3, 0)}
             >&#9660; Down</button>
-            <button style={getBtnStyle(3, 1)} disabled={activeBtn !== null && activeBtn !== '3-1'}
+            <button className={getBtnClass(3, 1)} disabled={activeBtn !== null && activeBtn !== '3-1'}
               onPointerDown={() => handleJogStart(3, 1)} onPointerUp={() => handleJogStop(3, 1)} onPointerLeave={() => handleJogStop(3, 1)}
             >Up &#9650;</button>
           </div>
