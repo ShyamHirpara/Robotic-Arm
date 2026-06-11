@@ -1,3 +1,5 @@
 pytest
 python-socketio[client]
 requests
+opencv-python
+numpy

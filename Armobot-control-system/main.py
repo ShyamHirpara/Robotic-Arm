@@ -681,6 +681,11 @@ if __name__ == "__main__":
                     dist_right, dist_left,
                     "true" if emergency_btn.value() == 1 else "false").encode())
 
+            elif path.startswith('/current_position'):
+                cl.send(b'HTTP/1.0 200 OK\r\nContent-type: application/json\r\n\r\n')
+                cl.send('{{"joint1":{:.1f},"joint2":{:.1f},"joint3":{:.1f}}}'.format(
+                    joint1.currentDegree, joint2.currentDegree, joint3.currentDegree).encode())
+
             elif path.startswith('/gripper'):
                 action = path.split('=')[1]
                 if action == 'open':
@@ -765,21 +770,21 @@ if __name__ == "__main__":
                 if e.args[0] != 11:
                     tcp_client.close(); tcp_client = None
 
+        # ── Ultrasonic ────────────────────────────────────────────────────────
+        dist_right = get_distance(us_right_trig, us_right_echo)
+        dist_left  = get_distance(us_left_trig,  us_left_echo)
+
         # ── Send position + range state to TCP client (every 100 ms) ──────────────
         now = time.ticks_ms()
         if tcp_client and time.ticks_diff(now, last_tcp_send) > 100:
             last_tcp_send = now
-            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{},"gripper_state":"{}"}}\n'.format(
+            state_str = '{{"s1":{:.1f},"s2":{:.1f},"s3":{:.1f},"n2":{},"x2":{},"n3":{},"x3":{},"gripper_state":"{}","dr":{:.1f},"dl":{:.1f}}}\n'.format(
                 joint1.currentDegree, joint2.currentDegree, joint3.currentDegree,
-                min_s2, max_s2, min_s3, max_s3, gripper_state)
+                min_s2, max_s2, min_s3, max_s3, gripper_state, dist_right, dist_left)
             try:
                 tcp_client.send(state_str.encode())
             except OSError:
                 tcp_client.close(); tcp_client = None
-
-        # ── Ultrasonic ────────────────────────────────────────────────────────
-        dist_right = get_distance(us_right_trig, us_right_echo)
-        dist_left  = get_distance(us_left_trig,  us_left_echo)
 
         # ── Emergency check ───────────────────────────────────────────────────
         check_emergency()

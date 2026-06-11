@@ -25,6 +25,8 @@ function ControlPanel({ state, setState }) {
           min_s3: json.n3  !== undefined ? json.n3  : prev.min_s3,
           max_s3: json.x3  !== undefined ? json.x3  : prev.max_s3,
           gripper_state: json.gripper_state !== undefined ? json.gripper_state : prev.gripper_state,
+          dr: json.dr !== undefined ? json.dr : prev.dr,
+          dl: json.dl !== undefined ? json.dl : prev.dl,
         }));
       } catch (e) {
         console.warn('Failed to parse robot_state payload:', e);

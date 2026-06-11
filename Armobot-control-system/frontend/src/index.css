@@ -112,7 +112,7 @@ body {
 
 /* ── DASHBOARD CARDS ─────────────────────────────────────────────────────── */
 .dgrid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(190px,1fr));
+  display: grid; grid-template-columns: repeat(3, 1fr);
   gap: 12px; margin-bottom: 20px;
 }
 .dc {

@@ -21,7 +21,8 @@ function App() {
   const [systemState, setSystemState] = useState({
     s1: 0, s2: 0, s3: 0,
     min_s2: -20, max_s2: 70, min_s3: -75, max_s3: 85,
-    gripper_state: 'closed', limit_triggered: false
+    gripper_state: 'closed', limit_triggered: false,
+    dr: 0, dl: 0
   });
 
   const handleLogout = () => {
