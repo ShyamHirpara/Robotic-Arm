@@ -66,7 +66,7 @@ from object_detector import detect_objects
 # PHYSICAL CONFIGURATION
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PICO_IP   = "192.168.4.1"
+PICO_IP   = "192.168.137.50"   # arm on the control PC's 'RoboticArm_PC' hotspot
 PICO_PORT = 81
 
 # Arm geometry (cm) — base at table level, shoulder pivot at L1 = 24 cm
@@ -611,7 +611,7 @@ def run_pick_place(dry_run: bool = False) -> None:
     arm = PicoController(dry_run=dry_run)
     if not arm.connect():
         print("[WARN] Pico not reachable — switching to DRY-RUN mode.")
-        print("       Connect to ARMOBOT WiFi (192.168.4.1) and retry for live mode.")
+        print("       Join the 'RoboticArm_PC' hotspot (arm at 192.168.137.50) and retry for live mode.")
         arm.dry_run = True   # safe fallback: camera runs, arm simulated
 
     # ── Open camera ──────────────────────────────────────────────────────────

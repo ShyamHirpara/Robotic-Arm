@@ -24,26 +24,9 @@ except:
     DNS_AVAILABLE = False
     print("⚠️ DNS server not available")
 
-# Access Point credentials (fallback if station WiFi fails)
+# Access Point credentials
 AP_SSID     = 'RoboticArm_AP'
 AP_PASSWORD = '12345678'
-
-# Station WiFi networks — tried in order: (ssid, password, static_ifconfig).
-# static_ifconfig = (ip, netmask, gateway, dns), or None for DHCP.
-#
-# 1. 'RoboticArm_PC' — Windows Mobile Hotspot on the control PC (started by
-#    Armobot-control-system/start_hotspot.ps1). The router (ZTE F670L) has
-#    client isolation enabled, so WiFi devices cannot reach each other through
-#    it — the PC's own hotspot bypasses that. Static IP keeps the arm at
-#    192.168.137.50 every boot.
-# 2. 'ARS' — router 2.4 GHz band (Pico W hardware cannot see 5 GHz 'ARS_5G').
-#    Only useful if the router's client isolation is ever disabled.
-WIFI_NETWORKS = [
-    ('RoboticArm_PC', '12345678',
-     ('192.168.137.50', '255.255.255.0', '192.168.137.1', '192.168.137.1')),
-    ('ARS', '9925512860', None),
-]
-WIFI_TIMEOUT_S = 15   # per-SSID join timeout
 
 
 # ─────────────────────────── GRIPPER ─────────────────────────────────────────
@@ -210,34 +193,6 @@ def solve_d2(d3_degrees):
         pass
 
 
-# ─────────────────────────── STATION (ROUTER) WIFI ──────────────────────────
-def connect_wifi():
-    """
-    Join the first reachable network in WIFI_NETWORKS (station mode).
-    Returns the active WLAN interface, or None if every SSID failed.
-    """
-    wlan = network.WLAN(network.STA_IF)
-    for ssid, password, static_cfg in WIFI_NETWORKS:
-        wlan.active(True)
-        wlan.config(pm=0xa11140)   # disable WiFi power-save — required to stay reachable as a server
-        if static_cfg:
-            wlan.ifconfig(static_cfg)
-        print(f"Connecting to '{ssid}' ...")
-        wlan.connect(ssid, password)
-        deadline = time.ticks_add(time.ticks_ms(), WIFI_TIMEOUT_S * 1000)
-        while time.ticks_diff(deadline, time.ticks_ms()) > 0:
-            if wlan.isconnected():
-                print(f"✅ Connected to '{ssid}'")
-                print(f"IP Address: {wlan.ifconfig()[0]}")
-                return wlan
-            time.sleep_ms(250)
-        print(f"⚠️ Could not join '{ssid}' within {WIFI_TIMEOUT_S}s")
-        wlan.disconnect()
-        wlan.active(False)   # full interface reset — restores DHCP for the next attempt
-        time.sleep_ms(500)
-    return None
-
-
 # ─────────────────────────── ACCESS POINT ────────────────────────────────────
 def create_access_point():
     ap = network.WLAN(network.AP_IF)
@@ -325,7 +280,7 @@ def jog_motion(j, d, tcp_sock):
     jog_axis = all_joints.index(j) + 1  # track for post-stop kinematics
 
     # ── Start continuous motion ────────────────────────────────────────────────
-    if not (limit_triggered or emergency_btn.value() == 1) : 
+    if not (limit_triggered or emergency_btn.value() == 1) :
         j.stepper.speed(j._jog_sps)
         j.stepper.free_run(1 if d else -1)
 
@@ -635,12 +590,7 @@ def goto_position(order, axis1_deg, axis2_deg, axis3_deg, gripper_action, tcp_so
 
 # ──────────────────────────────── MAIN ───────────────────────────────────────
 if __name__ == "__main__":
-    # Try router WiFi first; fall back to own Access Point so the arm
-    # is always reachable even when the router is down.
-    net = connect_wifi()
-    if net is None:
-        print("⚠️ Station WiFi failed — starting Access Point fallback")
-        net = create_access_point()
+    ap = create_access_point()
 
     gripper = Gripper()
 
@@ -685,7 +635,7 @@ if __name__ == "__main__":
     s = socket.socket()
     s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     s.bind(addr); s.listen(1); s.setblocking(False)
-    print(f"Server running on http://{net.ifconfig()[0]}:80")
+    print(f"Server running on http://{ap.ifconfig()[0]}:80")
 
     # ── TCP Bridge (port 81) for real-time jog control ───────────────────────
     addr2 = socket.getaddrinfo('0.0.0.0', 81)[0][-1]

@@ -78,7 +78,7 @@ import config
 # PHYSICAL CONFIGURATION  — edit to match your setup
 # ═══════════════════════════════════════════════════════════════════════════════
 
-PICO_IP        = "192.168.4.1"
+PICO_IP        = "192.168.137.50"   # arm on the control PC's 'RoboticArm_PC' hotspot
 PICO_PORT      = 81
 
 ARM_HEIGHT_CM  = 0.0       # arm base pivot height above table (cm)

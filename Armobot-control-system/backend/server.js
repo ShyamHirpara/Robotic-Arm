@@ -157,7 +157,7 @@ app.put('/api/users/:id', authenticateToken, requireAdmin, async (req, res) => {
 });
 
 // --- Pico W TCP Bridge ---
-const PICO_IP = process.env.PICO_IP || '192.168.4.1';
+const PICO_IP = process.env.PICO_IP || '192.168.137.50';
 const PICO_PORT = parseInt(process.env.PICO_PORT) || 81;
 let picoSocket = null;
 

@@ -7,7 +7,7 @@ export default defineConfig({
   server: {
     proxy: {
       '/pico': {
-        target: 'http://192.168.4.1',
+        target: 'http://192.168.137.50',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/pico/, '')
       }
